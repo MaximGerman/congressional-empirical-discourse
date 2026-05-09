@@ -216,3 +216,32 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Data files
+*.csv
+*.RData
+*.rda
+*.rds
+*.db
+*.sqlite
+
+# Large text/data files
+*.txt
+*.json
+*.jsonl
+
+# Models/checkpoints
+*.pt
+*.pth
+*.bin
+*.onnx
+
+# Specific project files mentioned in guide
+hearings_metadata.csv
+hearings_texts.csv
+RA_merged_with_agreement.csv
+df_withempirical.RData
+
+# Local data directories
+data/
+datasets/
