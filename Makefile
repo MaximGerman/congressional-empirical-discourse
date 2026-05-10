@@ -16,7 +16,7 @@ typecheck:
 	mypy src/
 
 test:
-	python -m pytest tests/ -v
+	python -m pytest tests/ -v --cov=src --cov-report=term-missing
 
 # Pipeline
 pipeline:
@@ -29,6 +29,6 @@ notebook:
 # Setup
 setup:
 	python -m venv .venv
-	.venv/bin/pip install -r requirements.txt
-	.venv/bin/pip install ruff
+	.venv/bin/pip install -r requirements-dev.txt
 	.venv/bin/python -c "import nltk; nltk.download('punkt_tab')"
+	.venv/bin/pre-commit install

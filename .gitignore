@@ -54,6 +54,7 @@ docs/_build/
 
 # Large text/data files
 *.txt
+!requirements*.txt
 *.json
 !.pymarkdown.json
 *.jsonl
