@@ -1,0 +1,208 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.3cm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{amsmath}
+\usepackage[numbers]{natbib}
+\usepackage{titlesec}
+
+\titlespacing*{\section}{0pt}{1.2ex plus 0.3ex minus 0.2ex}{0.6ex plus 0.1ex}
+\titlespacing*{\subsection}{0pt}{0.8ex plus 0.2ex minus 0.1ex}{0.4ex plus 0.1ex}
+\setlength{\parskip}{0.4em}
+\setlength{\parindent}{0pt}
+
+\title{\vspace{-1.5cm}\textbf{Temporal Robustness of Empirical Discourse Classification\\in U.S.\ Congressional Hearings (1997--2025)}}
+\author{
+  Maxim German \and Ilay [Last Name]\\[0.3em]
+  \small Workshop on Deep Learning (0368-3538), Spring 2025--2026\\
+  \small Tel Aviv University\\[0.3em]
+  \small \textit{TAD Mentor:} Amit Haim (Tel Aviv University)\\
+  \small \textit{Workshop Advisor:} Dr.\ Moni Shahar
+}
+\date{}
+
+\begin{document}
+\maketitle
+\vspace{-0.5cm}
+
+% ============================================================
+\section{Project Overview}
+% ============================================================
+
+This project extends the work of Haim \& Barak-Corren~\cite{haim2026}, who used a fine-tuned RoBERTa model to classify empirical discourse in U.S.\ House Committee Hearings from 1997--2016, analyzing over 5.8 million sentences.
+Their central finding---the ``Power or Knowledge'' framework, in which minority-party legislators strategically rely on empirical arguments as a substitute for formal power---is based entirely on pre-2016 data.
+
+The decade since 2015 has seen the most politically volatile period in modern U.S.\ history: the Trump presidency, COVID-19, the January 6th insurrection, and historically high partisan polarization.
+Whether the Power-or-Knowledge dynamic persists, intensifies, or breaks down under these conditions is an open and substantively important question.
+
+\textbf{Our project addresses this question through three contributions:}
+\begin{enumerate}[nosep]
+  \item A modernized classification baseline, comparing the original RoBERTa model against a state-of-the-art encoder (DeBERTa-v3) and a modern instruction-tuned LLM (Llama-3-8B);
+  \item A validated silver-labeling pipeline that extends the dataset to the 2015--2025 era without manual annotation;
+  \item A temporal analysis testing whether the Power-or-Knowledge finding holds in the modern political era.
+\end{enumerate}
+
+As an additional methodological contribution, we investigate whether continual pre-training (domain-adaptive pre-training) on congressional hearing text improves cross-temporal generalization of the classifier.
+
+% ============================================================
+\section{End Product}
+% ============================================================
+
+The deliverable is an end-to-end NLP pipeline with the following capabilities:
+\begin{itemize}[nosep]
+  \item \textbf{Data ingestion:} Scrapes and preprocesses modern congressional hearing transcripts (2015--2025) from the BICAM corpus.
+  \item \textbf{Classification:} Takes raw hearing text and outputs per-sentence empirical discourse labels using the best-performing model.
+  \item \textbf{Analysis:} Produces temporal trend plots, majority--minority comparisons, and statistical tests replicating and extending the original paper's analyses.
+  \item \textbf{Reproducibility:} A public GitHub repository with training scripts, evaluation notebooks, and a runnable demo.
+\end{itemize}
+
+% ============================================================
+\section{Training and Inference Schemes}
+% ============================================================
+
+\subsection{Phase 1: Model Comparison on Legacy Data}
+
+We compare three approaches on the existing human-labeled dataset (1,945 sentences, 1997--2015):
+
+\begin{enumerate}[nosep]
+  \item \textbf{RoBERTa-base} (baseline replication): Fine-tuned for binary classification following the original paper's setup, to establish a fair point of comparison.
+  \item \textbf{DeBERTa-v3-base} (modernized encoder): Fine-tuned with the same protocol. DeBERTa-v3's disentangled attention mechanism and replaced-token-detection pre-training have shown consistent improvements over RoBERTa on small-dataset tasks~\cite{he2023debertav3}.
+  \item \textbf{Llama-3-8B-Instruct} (LLM zero/few-shot): Evaluated in zero-shot and few-shot (3-shot) settings using the paper's own definition of empirical discourse as the prompt. Quantized to 4-bit via \texttt{bitsandbytes} to fit single-GPU memory.
+\end{enumerate}
+
+All fine-tuned models use 5-fold stratified cross-validation to handle the severe class imbalance (11.6\% positive class). We report macro-F1, precision, recall, and Cohen's $\kappa$.
+
+\textbf{Rationale for the LLM baseline:} The original paper explicitly considered and dismissed LLMs for this task (citing concerns about distinguishing facts from beliefs). Our evaluation directly tests this claim with a modern instruction-tuned model, and the result---regardless of direction---informs both the scientific question and our silver-labeling strategy in Phase~2.
+
+\subsection{Phase 2: Silver Labeling and Validation}
+
+To extend the analysis to 2015--2025 without manual annotation, we employ the best-performing LLM configuration from Phase~1 as a silver labeler:
+
+\begin{enumerate}[nosep]
+  \item \textbf{Validation:} We run the LLM on all 1,945 legacy gold-labeled sentences and compute Cohen's $\kappa$, precision, and recall against human labels. We compare the LLM's error patterns to inter-annotator disagreements ($\kappa = 0.44$ in the original study) to contextualize silver-label quality.
+  \item \textbf{Labeling:} We apply the validated LLM to a representative sample ($\sim$10,000 sentences) from the 2015--2025 BICAM corpus.
+  \item \textbf{Quality reporting:} We transparently report the silver-label trust metrics, enabling downstream consumers of the data to calibrate their confidence in the temporal analysis.
+\end{enumerate}
+
+\subsection{Phase 3: Domain-Adaptive Pre-Training (DAPT)}
+
+Following Gururangan et al.~\cite{gururangan2020}, we test whether continual pre-training improves cross-temporal robustness:
+
+\begin{enumerate}[nosep]
+  \item We perform Masked Language Modeling (MLM) continual pre-training of DeBERTa on the combined unlabeled corpus: the existing 500MB legacy hearing text (\texttt{df\_withempirical}) plus newly scraped BICAM text.
+  \item We then fine-tune this domain-adapted model on the same gold labels and compare against the off-the-shelf DeBERTa from Phase~1.
+\end{enumerate}
+
+\textbf{Expected outcomes:}
+\begin{itemize}[nosep]
+  \item If domain shift is significant: DAPT should improve performance on new-era text, validating the technique.
+  \item If domain shift is minimal: we report a null result---encoder models are temporally robust for this task---which is equally informative.
+\end{itemize}
+
+We will first verify that domain shift exists by computing the perplexity of the off-the-shelf model on old vs.\ new text and by analyzing vocabulary drift (e.g., terms like ``insurrection,'' ``COVID,'' ``misinformation'' absent from pre-2015 data).
+
+\subsection{Phase 4: Temporal Analysis}
+
+Using the best-performing model and validated silver labels, we replicate the original paper's key analyses on 2015--2025 data:
+\begin{itemize}[nosep]
+  \item Temporal trend of empirical discourse (does the post-2015 rise continue?).
+  \item Minority vs.\ majority empirical discourse gap in the Trump/Biden era.
+  \item Effect of the 2019 power shift (Democrats regain House majority).
+\end{itemize}
+
+% ============================================================
+\section{Datasets}
+% ============================================================
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}llrl@{}}
+\toprule
+\textbf{Dataset} & \textbf{Period} & \textbf{Size} & \textbf{Labels} \\
+\midrule
+\texttt{RA\_merged\_with\_agreement.csv} & 1997--2015 & 1,945 sentences & Human gold (binary + category) \\
+\texttt{df\_withempirical.RData} & 1997--2015 & $\sim$5.8M sentences & Unlabeled \\
+BICAM corpus (to be scraped) & 2015--2025 & TBD & Unlabeled $\to$ silver-labeled \\
+\bottomrule
+\end{tabular}
+\caption{Datasets used in this project.}
+\end{table}
+
+The labeled dataset exhibits severe class imbalance: 1,720 non-empirical (88.4\%) vs.\ 225 empirical (11.6\%) sentences. All evaluation protocols account for this via stratified splitting and class-weighted metrics.
+
+% ============================================================
+\section{Compute and Storage Requirements}
+% ============================================================
+
+\begin{itemize}[nosep]
+  \item \textbf{Compute:} CS Department GPU Cluster (Slurm). A single GPU is sufficient for all stages:
+  \begin{itemize}[nosep]
+    \item Fine-tuning DeBERTa-v3-base: $\sim$5 minutes per fold.
+    \item Continual MLM pre-training on $\sim$500MB text: $\sim$4--8 hours.
+    \item Llama-3-8B 4-bit inference on $\sim$12K sentences: $\sim$1--2 hours.
+  \end{itemize}
+  \item \textbf{Storage:} Personal directory under \texttt{/home/yandex/DLWorkShop2026b}. Estimated $\sim$3GB total (500MB corpus + BICAM data + model checkpoints).
+  \item \textbf{Development:} Local development and debugging in CPU mode; final runs on cluster.
+\end{itemize}
+
+% ============================================================
+\section{Third-Party Tools and Models}
+% ============================================================
+
+\begin{itemize}[nosep]
+  \item \textbf{Models:} \texttt{microsoft/deberta-v3-base}, \texttt{roberta-base}, \texttt{meta-llama/Llama-3-8B-Instruct}
+  \item \textbf{Libraries:} HuggingFace \texttt{transformers}, \texttt{datasets}, and \texttt{evaluate}; \texttt{bitsandbytes} for 4-bit quantization; PyTorch
+  \item \textbf{Data:} \texttt{bicam} Python package for congressional transcript scraping
+  \item \textbf{Evaluation:} \texttt{scikit-learn} for metrics; ClaimBuster API for external validation (following the original paper)
+\end{itemize}
+
+% ============================================================
+\section{Existing Solutions and Related Work}
+% ============================================================
+
+\textbf{Primary basis.} This project builds directly on Haim \& Barak-Corren~\cite{haim2026}, who fine-tuned RoBERTa-base on $\sim$2,000 human-labeled sentences to classify empirical discourse, achieving 0.91 accuracy and 0.77 F1. Their analysis covered 1997--2016; we extend it to 2025.
+
+\textbf{Domain-adaptive pre-training.} Gururangan et al.~\cite{gururangan2020} demonstrated that continual pre-training on domain-specific and task-specific text (DAPT and TAPT) consistently improves downstream performance, even for models already pre-trained on large corpora. We apply this methodology to bridge the temporal gap in congressional language.
+
+\textbf{LLM-as-annotator.} Recent work has explored using LLMs as silver labelers for NLP tasks, with careful calibration against human annotations~\cite{gilardi2023chatgpt, he2024annollm}. We adopt this paradigm with rigorous validation, directly addressing concerns raised by the original authors about LLM suitability for this task.
+
+\textbf{Congressional NLP.} Related computational analyses of congressional discourse include Park~(2021) on grandstanding scores, Aroyehun et al.~(2024) on evidence-based rhetoric trends, and Furnas et al.~(2024) on scientific citations in committee documents.
+
+% ============================================================
+% References
+% ============================================================
+\bibliographystyle{plainnat}
+
+\begin{thebibliography}{9}
+
+\bibitem[Haim and Barak-Corren(2026)]{haim2026}
+Amit Haim and Netta Barak-Corren.
+\newblock In this house we believe in... empirical evidence? {P}ower and knowledge dynamics in congressional hearings.
+\newblock Working Paper, Tel Aviv University and Hebrew University of Jerusalem, 2026.
+
+\bibitem[He et al.(2023)]{he2023debertav3}
+Pengcheng He, Jianfeng Gao, and Weizhu Chen.
+\newblock {DeBERTaV3}: Improving {DeBERTa} using {ELECTRA}-style pre-training with gradient-disentangled embedding sharing.
+\newblock In \emph{Proc.\ ICLR}, 2023.
+
+\bibitem[Gururangan et al.(2020)]{gururangan2020}
+Suchin Gururangan, Ana Marasovi{\'c}, Swabha Swayamdipta, Kyle Lo, Iz Beltagy, Doug Downey, and Noah~A. Smith.
+\newblock Don't stop pretraining: Adapt language models to domains and tasks.
+\newblock In \emph{Proc.\ ACL}, pages 8342--8360, 2020.
+
+\bibitem[Gilardi et al.(2023)]{gilardi2023chatgpt}
+Fabrizio Gilardi, Meysam Alizadeh, and Ma{\"e}l Kubli.
+\newblock {ChatGPT} outperforms crowd-workers for text-annotation tasks.
+\newblock \emph{Proceedings of the National Academy of Sciences}, 120(30), 2023.
+
+\bibitem[He et al.(2024)]{he2024annollm}
+Ruoyu He, Yinfang Chen, and Jundong Li.
+\newblock {AnnoLLM}: Making large language models to be better crowdsourced annotators.
+\newblock \emph{arXiv preprint arXiv:2303.16854}, 2024.
+
+\end{thebibliography}
+
+\end{document}
