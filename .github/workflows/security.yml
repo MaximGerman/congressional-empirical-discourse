@@ -14,8 +14,10 @@ jobs:
         with:
           python-version: "3.9"
 
-      - name: Install pip-audit
-        run: pip install pip-audit
+      - name: Install dependencies and pip-audit
+        run: |
+          pip install pip-audit
+          pip install -r requirements.txt
 
       - name: Audit dependencies
-        run: pip-audit -r requirements.txt
+        run: pip-audit
