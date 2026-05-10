@@ -1,0 +1,17 @@
+{
+  "mode": "relaxed",
+  "plugins": {
+    "line-length": {
+      "enabled": false
+    },
+    "no-trailing-spaces": {
+      "strict": false
+    },
+    "no-inline-html": {
+      "enabled": false
+    },
+    "first-line-heading": {
+      "enabled": false
+    }
+  }
+}
