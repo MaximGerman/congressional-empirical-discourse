@@ -7,7 +7,6 @@ Data pipeline for processing U.S. congressional hearing transcripts from the [BI
 ```
 .
 ├── README.md                  # This file
-├── BICAM_SETUP_GUIDE.md       # Original setup guide / reference
 ├── requirements.txt           # Python dependencies
 ├── src/
 │   ├── __init__.py

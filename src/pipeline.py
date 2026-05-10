@@ -14,34 +14,33 @@ Usage:
 """
 
 import os
-import sys
+
 import pandas as pd
 from tqdm import tqdm
 
 from src.data import (
-    load_hearings,
-    load_hearings_texts_chunked,
-    load_hearings_members,
-    load_hearings_committees,
-    load_hearings_dates,
-    load_members,
-    load_members_terms,
-    filter_hearings_by_congress,
-    build_member_lookup,
-    build_hearing_member_map,
-    get_majority_status,
     HOUSE_MAJORITY,
     TEXT_COLUMN,
+    build_hearing_member_map,
+    build_member_lookup,
+    filter_hearings_by_congress,
+    get_majority_status,
+    load_hearings,
+    load_hearings_committees,
+    load_hearings_dates,
+    load_hearings_members,
+    load_hearings_texts_chunked,
+    load_members,
+    load_members_terms,
 )
 from src.preprocess import (
     download_nltk_deps,
-    process_single_hearing,
-    match_speaker_to_member,
     is_likely_witness,
+    match_speaker_to_member,
+    process_single_hearing,
 )
 
-
-OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
+OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 
 
 def ensure_output_dir():
@@ -60,10 +59,10 @@ def step1_explore_data():
     print(f"Congress range: {hearings_df['congress'].min()} - {hearings_df['congress'].max()}")
 
     # Filter to target period (House only, 115th+)
-    new_era = filter_hearings_by_congress(hearings_df, min_congress=115, chamber='house')
+    new_era = filter_hearings_by_congress(hearings_df, min_congress=115, chamber="house")
     print(f"\nHouse hearings from 115th Congress onwards: {len(new_era)}")
-    print(f"\nBreakdown by congress:")
-    print(new_era['congress'].value_counts().sort_index().to_string())
+    print("\nBreakdown by congress:")
+    print(new_era["congress"].value_counts().sort_index().to_string())
 
     return hearings_df, new_era
 
@@ -74,7 +73,7 @@ def step2_load_transcripts(new_era):
     print("STEP 2: Loading transcripts for target hearings")
     print("=" * 60)
 
-    target_ids = new_era['hearing_id'].tolist()
+    target_ids = new_era["hearing_id"].tolist()
     print(f"Loading transcripts for {len(target_ids)} hearings (reading ~5.4GB file in chunks)...")
 
     texts_df = load_hearings_texts_chunked(target_ids)
@@ -90,16 +89,18 @@ def step2_load_transcripts(new_era):
     text = str(sample_row[TEXT_COLUMN])
     print(f"\nSample transcript (hearing_id={sample_row['hearing_id']}):")
     # Find the dialogue section
-    lines = text.split('\n')
+    lines = text.split("\n")
     for i, line in enumerate(lines):
-        if line.strip().startswith(('Chairman', 'Mr.', 'Mrs.', 'Ms.')):
-            # Check if it's dialogue (not table of contents)
-            if '....' not in line and len(line.strip()) > 20:
-                start = max(0, i)
-                end = min(len(lines), i + 15)
-                for j in range(start, end):
-                    print(f"  {lines[j]}")
-                break
+        if (
+            line.strip().startswith(("Chairman", "Mr.", "Mrs.", "Ms."))
+            and "...." not in line
+            and len(line.strip()) > 20
+        ):
+            start = max(0, i)
+            end = min(len(lines), i + 15)
+            for j in range(start, end):
+                print(f"  {lines[j]}")
+            break
 
     return texts_df
 
@@ -122,7 +123,7 @@ def step3_process_transcripts(new_era, texts_df):
     empty_hearings = 0
 
     for _, row in tqdm(processable.iterrows(), total=len(processable), desc="Processing hearings"):
-        hearing_id = row['hearing_id']
+        hearing_id = row["hearing_id"]
         text = str(row[TEXT_COLUMN])
 
         try:
@@ -132,7 +133,7 @@ def step3_process_transcripts(new_era, texts_df):
             else:
                 empty_hearings += 1
         except Exception as e:
-            failed_hearings.append({'hearing_id': hearing_id, 'error': str(e)})
+            failed_hearings.append({"hearing_id": hearing_id, "error": str(e)})
 
     sentences_df = pd.DataFrame(all_records)
     print(f"\nTotal sentences extracted: {len(sentences_df)}")
@@ -161,33 +162,29 @@ def step4_enrich_metadata(sentences_df, new_era):
     hearings_dates = load_hearings_dates()
 
     # Merge congress info from hearings
-    hearing_info = new_era[['hearing_id', 'congress', 'chamber']].copy()
-    if 'title' in new_era.columns:
-        hearing_info['title'] = new_era['title']
+    hearing_info = new_era[["hearing_id", "congress", "chamber"]].copy()
+    if "title" in new_era.columns:
+        hearing_info["title"] = new_era["title"]
 
-    sentences_df = sentences_df.merge(hearing_info, on='hearing_id', how='left')
+    sentences_df = sentences_df.merge(hearing_info, on="hearing_id", how="left")
 
     # Merge committee info (take first committee per hearing)
-    first_committee = hearings_committees.drop_duplicates(subset='hearing_id', keep='first')
+    first_committee = hearings_committees.drop_duplicates(subset="hearing_id", keep="first")
     sentences_df = sentences_df.merge(
-        first_committee[['hearing_id', 'committee_code', 'committee_name']],
-        on='hearing_id', how='left'
+        first_committee[["hearing_id", "committee_code", "committee_name"]], on="hearing_id", how="left"
     )
 
     # Merge date info (take first date per hearing)
-    first_date = hearings_dates.drop_duplicates(subset='hearing_id', keep='first')
-    sentences_df = sentences_df.merge(
-        first_date[['hearing_id', 'hearing_date']],
-        on='hearing_id', how='left'
-    )
+    first_date = hearings_dates.drop_duplicates(subset="hearing_id", keep="first")
+    sentences_df = sentences_df.merge(first_date[["hearing_id", "hearing_date"]], on="hearing_id", how="left")
 
     # Filter out likely witnesses
-    sentences_df['is_witness'] = sentences_df['speaker'].apply(is_likely_witness)
-    n_witness = sentences_df['is_witness'].sum()
+    sentences_df["is_witness"] = sentences_df["speaker"].apply(is_likely_witness)
+    n_witness = sentences_df["is_witness"].sum()
     n_total = len(sentences_df)
-    print(f"Identified {n_witness} witness sentences ({n_witness/n_total*100:.1f}%) -- filtering out")
+    print(f"Identified {n_witness} witness sentences ({n_witness / n_total * 100:.1f}%) -- filtering out")
 
-    legislators_df = sentences_df[~sentences_df['is_witness']].copy()
+    legislators_df = sentences_df[~sentences_df["is_witness"]].copy()
     print(f"Legislator sentences remaining: {len(legislators_df)}")
 
     # Match speakers to members using vectorized merge + fuzzy fallback
@@ -205,115 +202,121 @@ def step4_enrich_metadata(sentences_df, new_era):
     # Strategy: match unique (hearing_id, speaker_last_name) pairs, then merge back.
     # This reduces millions of lookups to thousands.
 
-    unique_pairs = legislators_df[['hearing_id', 'speaker_last_name', 'congress']].drop_duplicates()
+    unique_pairs = legislators_df[["hearing_id", "speaker_last_name", "congress"]].drop_duplicates()
     print(f"Unique (hearing, speaker) pairs to match: {len(unique_pairs)}")
 
     # Step A: Merge against hearing_member_map (exact match on hearing_id + last_name)
     # Only keep hearing-member combos where exactly one member matches that last name
-    hm_deduped = hearing_member_map.drop_duplicates(subset=['hearing_id', 'last_name_upper'])
-    hm_counts = hearing_member_map.groupby(['hearing_id', 'last_name_upper']).size().reset_index(name='_count')
-    hm_unique = hm_counts[hm_counts['_count'] == 1][['hearing_id', 'last_name_upper']]
-    hm_matchable = hm_deduped.merge(hm_unique, on=['hearing_id', 'last_name_upper'])
+    hm_deduped = hearing_member_map.drop_duplicates(subset=["hearing_id", "last_name_upper"])
+    hm_counts = hearing_member_map.groupby(["hearing_id", "last_name_upper"]).size().reset_index(name="_count")
+    hm_unique = hm_counts[hm_counts["_count"] == 1][["hearing_id", "last_name_upper"]]
+    hm_matchable = hm_deduped.merge(hm_unique, on=["hearing_id", "last_name_upper"])
 
     matched_via_hearing = unique_pairs.merge(
-        hm_matchable[['hearing_id', 'last_name_upper', 'bioguide_id', 'last_name', 'first_name', 'party', 'state']],
-        left_on=['hearing_id', 'speaker_last_name'],
-        right_on=['hearing_id', 'last_name_upper'],
-        how='left'
+        hm_matchable[["hearing_id", "last_name_upper", "bioguide_id", "last_name", "first_name", "party", "state"]],
+        left_on=["hearing_id", "speaker_last_name"],
+        right_on=["hearing_id", "last_name_upper"],
+        how="left",
     )
-    matched_via_hearing['match_type'] = None
-    matched_via_hearing.loc[matched_via_hearing['bioguide_id'].notna(), 'match_type'] = 'hearing_member_exact'
-    matched_via_hearing.loc[matched_via_hearing['bioguide_id'].notna(), 'match_score'] = 100
+    matched_via_hearing["match_type"] = None
+    matched_via_hearing.loc[matched_via_hearing["bioguide_id"].notna(), "match_type"] = "hearing_member_exact"
+    matched_via_hearing.loc[matched_via_hearing["bioguide_id"].notna(), "match_score"] = 100
 
     # Step B: For unmatched pairs, try exact match against all members in that congress
-    unmatched_mask = matched_via_hearing['bioguide_id'].isna()
-    unmatched = matched_via_hearing[unmatched_mask][['hearing_id', 'speaker_last_name', 'congress']].copy()
+    unmatched_mask = matched_via_hearing["bioguide_id"].isna()
+    unmatched = matched_via_hearing[unmatched_mask][["hearing_id", "speaker_last_name", "congress"]].copy()
 
     if not unmatched.empty:
         # Exact match against member_lookup (all House members by congress)
-        ml_counts = member_lookup.groupby(['congress', 'last_name_upper']).size().reset_index(name='_count')
-        ml_unique = ml_counts[ml_counts['_count'] == 1][['congress', 'last_name_upper']]
-        ml_deduped = member_lookup.drop_duplicates(subset=['congress', 'last_name_upper'])
-        ml_matchable = ml_deduped.merge(ml_unique, on=['congress', 'last_name_upper'])
+        ml_counts = member_lookup.groupby(["congress", "last_name_upper"]).size().reset_index(name="_count")
+        ml_unique = ml_counts[ml_counts["_count"] == 1][["congress", "last_name_upper"]]
+        ml_deduped = member_lookup.drop_duplicates(subset=["congress", "last_name_upper"])
+        ml_matchable = ml_deduped.merge(ml_unique, on=["congress", "last_name_upper"])
 
         congress_matched = unmatched.merge(
-            ml_matchable[['congress', 'last_name_upper', 'bioguide_id', 'last_name', 'first_name', 'party', 'state']],
-            left_on=['congress', 'speaker_last_name'],
-            right_on=['congress', 'last_name_upper'],
-            how='left'
+            ml_matchable[["congress", "last_name_upper", "bioguide_id", "last_name", "first_name", "party", "state"]],
+            left_on=["congress", "speaker_last_name"],
+            right_on=["congress", "last_name_upper"],
+            how="left",
         )
-        congress_matched['match_type'] = None
-        congress_matched.loc[congress_matched['bioguide_id'].notna(), 'match_type'] = 'congress_exact'
-        congress_matched['match_score'] = None
-        congress_matched.loc[congress_matched['bioguide_id'].notna(), 'match_score'] = 100
+        congress_matched["match_type"] = None
+        congress_matched.loc[congress_matched["bioguide_id"].notna(), "match_type"] = "congress_exact"
+        congress_matched["match_score"] = None
+        congress_matched.loc[congress_matched["bioguide_id"].notna(), "match_score"] = 100
 
         # Step C: For still unmatched, try fuzzy matching (only unique last_name + congress combos)
-        still_unmatched = congress_matched[congress_matched['bioguide_id'].isna()]
-        fuzzy_pairs = still_unmatched[['speaker_last_name', 'congress']].drop_duplicates()
+        still_unmatched = congress_matched[congress_matched["bioguide_id"].isna()]
+        fuzzy_pairs = still_unmatched[["speaker_last_name", "congress"]].drop_duplicates()
         print(f"Fuzzy matching {len(fuzzy_pairs)} unique (name, congress) pairs...")
 
         fuzzy_results = {}
         for _, fp in tqdm(fuzzy_pairs.iterrows(), total=len(fuzzy_pairs), desc="Fuzzy matching"):
-            result = match_speaker_to_member(fp['speaker_last_name'], member_lookup, fp['congress'])
-            fuzzy_results[(fp['speaker_last_name'], fp['congress'])] = result
+            result = match_speaker_to_member(fp["speaker_last_name"], member_lookup, fp["congress"])
+            fuzzy_results[(fp["speaker_last_name"], fp["congress"])] = result
 
         # Apply fuzzy results back to congress_matched
-        for idx, row in congress_matched[congress_matched['bioguide_id'].isna()].iterrows():
-            key = (row['speaker_last_name'], row['congress'])
+        for idx, row in congress_matched[congress_matched["bioguide_id"].isna()].iterrows():
+            key = (row["speaker_last_name"], row["congress"])
             result = fuzzy_results.get(key)
             if result:
-                congress_matched.at[idx, 'bioguide_id'] = result['bioguide_id']
-                congress_matched.at[idx, 'last_name'] = result['matched_name']
-                congress_matched.at[idx, 'first_name'] = result['first_name']
-                congress_matched.at[idx, 'party'] = result['party']
-                congress_matched.at[idx, 'state'] = result['state']
-                congress_matched.at[idx, 'match_score'] = result['match_score']
-                congress_matched.at[idx, 'match_type'] = result['match_type']
+                congress_matched.at[idx, "bioguide_id"] = result["bioguide_id"]
+                congress_matched.at[idx, "last_name"] = result["matched_name"]
+                congress_matched.at[idx, "first_name"] = result["first_name"]
+                congress_matched.at[idx, "party"] = result["party"]
+                congress_matched.at[idx, "state"] = result["state"]
+                congress_matched.at[idx, "match_score"] = result["match_score"]
+                congress_matched.at[idx, "match_type"] = result["match_type"]
 
         # Update matched_via_hearing with results from congress_matched
-        update_cols = ['bioguide_id', 'last_name', 'first_name', 'party', 'state', 'match_score', 'match_type']
+        update_cols = ["bioguide_id", "last_name", "first_name", "party", "state", "match_score", "match_type"]
         for col in update_cols:
             if col not in matched_via_hearing.columns:
                 matched_via_hearing[col] = None
         matched_via_hearing.loc[unmatched_mask, update_cols] = congress_matched[update_cols].values
 
-    # Build the final match lookup: (hearing_id, speaker_last_name) -> member info
-    match_lookup = matched_via_hearing.set_index(['hearing_id', 'speaker_last_name'])
-
     # Merge match results back into legislators_df
     legislators_df = legislators_df.merge(
-        matched_via_hearing[['hearing_id', 'speaker_last_name', 'bioguide_id',
-                             'first_name', 'party', 'state', 'match_score', 'match_type']].rename(
-            columns={'first_name': 'member_first_name', 'state': 'member_state'}
-        ),
-        on=['hearing_id', 'speaker_last_name'],
-        how='left'
+        matched_via_hearing[
+            [
+                "hearing_id",
+                "speaker_last_name",
+                "bioguide_id",
+                "first_name",
+                "party",
+                "state",
+                "match_score",
+                "match_type",
+            ]
+        ].rename(columns={"first_name": "member_first_name", "state": "member_state"}),
+        on=["hearing_id", "speaker_last_name"],
+        how="left",
     )
 
     # Report match rate
-    matched_count = legislators_df['bioguide_id'].notna().sum()
+    matched_count = legislators_df["bioguide_id"].notna().sum()
     total = len(legislators_df)
-    print(f"\nMatch rate: {matched_count}/{total} ({matched_count/total*100:.1f}%)")
-    print(f"\nMatch type breakdown:")
-    print(legislators_df['match_type'].value_counts().to_string())
+    print(f"\nMatch rate: {matched_count}/{total} ({matched_count / total * 100:.1f}%)")
+    print("\nMatch type breakdown:")
+    print(legislators_df["match_type"].value_counts().to_string())
 
     # Add majority/minority status (vectorized)
-    majority_map = {(p, c): get_majority_status(p, c)
-                    for p in ['Republican', 'Democratic', 'Democrat', 'Independent', 'Libertarian']
-                    for c in HOUSE_MAJORITY.keys()}
+    majority_map = {
+        (p, c): get_majority_status(p, c)
+        for p in ["Republican", "Democratic", "Democrat", "Independent", "Libertarian"]
+        for c in HOUSE_MAJORITY
+    }
 
-    legislators_df['minority'] = legislators_df.apply(
-        lambda r: majority_map.get((r['party'], r['congress'])) if pd.notna(r['party']) else None,
-        axis=1
+    legislators_df["minority"] = legislators_df.apply(
+        lambda r: majority_map.get((r["party"], r["congress"])) if pd.notna(r["party"]) else None, axis=1
     )
 
-    print(f"\nParty breakdown:")
-    print(legislators_df['party'].value_counts().to_string())
-    print(f"\nMinority status (1=minority, 0=majority):")
-    print(legislators_df['minority'].value_counts().to_string())
+    print("\nParty breakdown:")
+    print(legislators_df["party"].value_counts().to_string())
+    print("\nMinority status (1=minority, 0=majority):")
+    print(legislators_df["minority"].value_counts().to_string())
 
     # Drop helper columns
-    legislators_df = legislators_df.drop(columns=['is_witness'], errors='ignore')
+    legislators_df = legislators_df.drop(columns=["is_witness"], errors="ignore")
 
     return legislators_df
 
@@ -329,7 +332,7 @@ def step5_create_sample(legislators_df, sample_size=10000, seed=42):
         return pd.DataFrame()
 
     # Only sample from matched legislators
-    matched = legislators_df[legislators_df['bioguide_id'].notna()].copy()
+    matched = legislators_df[legislators_df["bioguide_id"].notna()].copy()
     print(f"Matched legislator sentences available: {len(matched)}")
 
     if len(matched) <= sample_size:
@@ -337,11 +340,11 @@ def step5_create_sample(legislators_df, sample_size=10000, seed=42):
         sample = matched.copy()
     else:
         # Stratified sample by congress
-        congresses = sorted(matched['congress'].unique())
+        congresses = sorted(matched["congress"].unique())
         per_congress = sample_size // len(congresses)
         parts = []
         for c in congresses:
-            congress_data = matched[matched['congress'] == c]
+            congress_data = matched[matched["congress"] == c]
             n = min(len(congress_data), per_congress)
             parts.append(congress_data.sample(n, random_state=seed))
 
@@ -350,19 +353,16 @@ def step5_create_sample(legislators_df, sample_size=10000, seed=42):
         # Top up if we didn't hit the target
         if len(sample) < sample_size:
             remaining = matched[~matched.index.isin(sample.index)]
-            extra = remaining.sample(
-                min(len(remaining), sample_size - len(sample)),
-                random_state=seed
-            )
+            extra = remaining.sample(min(len(remaining), sample_size - len(sample)), random_state=seed)
             sample = pd.concat([sample, extra], ignore_index=True)
 
     print(f"\nSample size: {len(sample)}")
-    print(f"\nCongress distribution:")
-    print(sample['congress'].value_counts().sort_index().to_string())
-    print(f"\nParty distribution:")
-    print(sample['party'].value_counts().to_string())
-    print(f"\nMinority distribution:")
-    print(sample['minority'].value_counts().to_string())
+    print("\nCongress distribution:")
+    print(sample["congress"].value_counts().sort_index().to_string())
+    print("\nParty distribution:")
+    print(sample["party"].value_counts().to_string())
+    print("\nMinority distribution:")
+    print(sample["minority"].value_counts().to_string())
 
     return sample
 
@@ -372,10 +372,10 @@ def run_pipeline():
     ensure_output_dir()
 
     # Step 1: Explore and filter
-    hearings_df, new_era = step1_explore_data()
+    _hearings_df, new_era = step1_explore_data()
 
     # Step 2-3: Load and process transcripts (skip if raw CSV already exists)
-    raw_path = os.path.join(OUTPUT_DIR, 'sentences_raw.csv')
+    raw_path = os.path.join(OUTPUT_DIR, "sentences_raw.csv")
     if os.path.exists(raw_path):
         print(f"\nFound existing raw sentences at {raw_path}, loading...")
         sentences_df = pd.read_csv(raw_path)
@@ -385,7 +385,7 @@ def run_pipeline():
         texts_df = step2_load_transcripts(new_era)
 
         # Step 3: Process transcripts
-        sentences_df, failed = step3_process_transcripts(new_era, texts_df)
+        sentences_df, _failed = step3_process_transcripts(new_era, texts_df)
 
         if sentences_df.empty:
             print("\nERROR: No sentences extracted. Check transcript format.")
@@ -399,7 +399,7 @@ def run_pipeline():
     legislators_df = step4_enrich_metadata(sentences_df, new_era)
 
     # Save enriched data
-    enriched_path = os.path.join(OUTPUT_DIR, 'sentences_enriched.csv')
+    enriched_path = os.path.join(OUTPUT_DIR, "sentences_enriched.csv")
     legislators_df.to_csv(enriched_path, index=False)
     print(f"\nEnriched legislator sentences saved to: {enriched_path}")
 
@@ -407,7 +407,7 @@ def run_pipeline():
     sample = step5_create_sample(legislators_df)
 
     # Save sample
-    sample_path = os.path.join(OUTPUT_DIR, 'sample_for_labeling.csv')
+    sample_path = os.path.join(OUTPUT_DIR, "sample_for_labeling.csv")
     sample.to_csv(sample_path, index=False)
     print(f"\nSilver labeling sample saved to: {sample_path}")
 
@@ -422,10 +422,10 @@ def run_pipeline():
     print(f"  Matched to member database: {legislators_df['bioguide_id'].notna().sum()}")
     print(f"  Silver labeling sample: {len(sample)}")
     print(f"\nOutput files in: {OUTPUT_DIR}/")
-    print(f"  sentences_raw.csv")
-    print(f"  sentences_enriched.csv")
-    print(f"  sample_for_labeling.csv")
+    print("  sentences_raw.csv")
+    print("  sentences_enriched.csv")
+    print("  sample_for_labeling.csv")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     run_pipeline()

@@ -1,0 +1,31 @@
+[project]
+name = "congressional-empirical-discourse"
+version = "0.1.0"
+description = "Data pipeline for processing U.S. congressional hearing transcripts into sentence-level records with political metadata"
+requires-python = ">=3.9"
+
+[tool.ruff]
+target-version = "py39"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "RUF", # ruff-specific rules
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "SIM108", # don't force ternary — readability matters more
+]
+
+[tool.ruff.lint.per-file-ignores]
+"notebooks/*.ipynb" = ["E402"]  # imports after sys.path setup is standard in notebooks
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]

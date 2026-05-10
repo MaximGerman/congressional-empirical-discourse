@@ -16,7 +16,8 @@ docs/
 │
 ├── project/                             # Project-specific documentation
 │   ├── proposal.tex                     # LaTeX proposal (due May 23, 2026)
-│   ├── project_overview.md              # Phase plan and execution strategy
+│   ├── initial_project_overview.md      # Phase plan and execution strategy
+│   ├── bicam_setup_guide.md             # BICAM data setup & pipeline reference
 │   └── meeting_notes_kickoff.md         # Zoom kickoff meeting with Amit Haim
 │
 └── data/                                # Dataset documentation
@@ -29,7 +30,7 @@ These resource files are either already text-readable, binary data, or too large
 
 | File | Reason | Location |
 |------|--------|----------|
-| `BICAM_SETUP_GUIDE.md` | Already markdown; exists at repo root | `./BICAM_SETUP_GUIDE.md` |
+| `bicam_setup_guide.md` | Already markdown; moved into `docs/project/` | `docs/project/bicam_setup_guide.md` |
 | `proposal.tex` | Already text; copied into `docs/project/` | `docs/project/proposal.tex` |
 | `RA_merged_with_agreement.csv` | Tabular data (1,945 rows); schema documented | `docs/data/labeled_dataset_schema.md` |
 | `df_withempirical.RData` | 531MB binary R data file; cannot be transcribed | N/A (use on cluster) |

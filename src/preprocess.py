@@ -1,11 +1,11 @@
 import re
+
 import nltk
-import pandas as pd
 from rapidfuzz import fuzz, process
 
 
 def download_nltk_deps():
-    nltk.download('punkt_tab', quiet=True)
+    nltk.download("punkt_tab", quiet=True)
 
 
 # Speaker pattern matching actual BICAM GPO transcript format.
@@ -16,16 +16,14 @@ def download_nltk_deps():
 #   "    Ms. Fudge. Thank you, Mr. Chairman."
 #   "    The Chairman. The committee will come to order."
 SPEAKER_PATTERN = re.compile(
-    r'^\s{2,}((?:Mr|Mrs|Ms|Dr|Chairman|Chairwoman|Chairperson|'
-    r'Senator|Representative|General|Admiral|Secretary|Judge|'
-    r'Ambassador|Governor|Mayor|Professor|Reverend|Father)'
-    r'\.?\s+[A-Z][A-Za-z\'\-]+(?:\s+[A-Za-z\'\-]+)?)\.'
+    r"^\s{2,}((?:Mr|Mrs|Ms|Dr|Chairman|Chairwoman|Chairperson|"
+    r"Senator|Representative|General|Admiral|Secretary|Judge|"
+    r"Ambassador|Governor|Mayor|Professor|Reverend|Father)"
+    r"\.?\s+[A-Z][A-Za-z\'\-]+(?:\s+[A-Za-z\'\-]+)?)\."
 )
 
 # Pattern for "The Chairman." / "The Chairwoman." without a last name
-THE_CHAIR_PATTERN = re.compile(
-    r'^\s{2,}(The\s+Chair(?:man|woman))\.'
-)
+THE_CHAIR_PATTERN = re.compile(r"^\s{2,}(The\s+Chair(?:man|woman))\.")
 
 
 def segment_speakers(transcript_text):
@@ -44,10 +42,10 @@ def segment_speakers(transcript_text):
     current_speaker = None
     current_text = []
 
-    for line in transcript_text.split('\n'):
+    for line in transcript_text.split("\n"):
         # Match against the original line (preserving leading whitespace)
         # but skip table-of-contents lines (contain "...." sequences)
-        if '....' in line:
+        if "...." in line:
             continue
 
         stripped = line.strip()
@@ -60,10 +58,7 @@ def segment_speakers(transcript_text):
         if match:
             # Save previous speaker's chunk
             if current_speaker and current_text:
-                chunks.append({
-                    'speaker': current_speaker,
-                    'text': ' '.join(current_text)
-                })
+                chunks.append({"speaker": current_speaker, "text": " ".join(current_text)})
             current_speaker = match.group(1).strip()
             # Everything after the match end (which is at the ".") is the speech
             full_match_end = match.end(0)  # end of full match including the "."
@@ -75,10 +70,7 @@ def segment_speakers(transcript_text):
 
     # Don't forget the last speaker
     if current_speaker and current_text:
-        chunks.append({
-            'speaker': current_speaker,
-            'text': ' '.join(current_text)
-        })
+        chunks.append({"speaker": current_speaker, "text": " ".join(current_text)})
 
     return chunks
 
@@ -94,7 +86,7 @@ def extract_last_name(speaker_str):
     if not parts:
         return None
     # Last token is the last name (handles "Mr. SMITH", "The CHAIRMAN", etc.)
-    last_name = parts[-1].strip('.').upper()
+    last_name = parts[-1].strip(".").upper()
     return last_name
 
 
@@ -107,7 +99,7 @@ def create_sentence_records(speech_chunks, hearing_id):
 
     records = []
     for chunk in speech_chunks:
-        text = chunk['text'].strip()
+        text = chunk["text"].strip()
         if not text:
             continue
         sentences = sent_tokenize(text)
@@ -116,12 +108,12 @@ def create_sentence_records(speech_chunks, hearing_id):
             if len(sent.strip()) < 5:
                 continue
             record = {
-                'hearing_id': hearing_id,
-                'speaker': chunk['speaker'],
-                'speaker_last_name': extract_last_name(chunk['speaker']),
-                'context_before': sentences[i - 1] if i > 0 else '',
-                'target_sentence': sent,
-                'context_after': sentences[i + 1] if i < len(sentences) - 1 else '',
+                "hearing_id": hearing_id,
+                "speaker": chunk["speaker"],
+                "speaker_last_name": extract_last_name(chunk["speaker"]),
+                "context_before": sentences[i - 1] if i > 0 else "",
+                "target_sentence": sent,
+                "context_after": sentences[i + 1] if i < len(sentences) - 1 else "",
             }
             records.append(record)
     return records
@@ -151,26 +143,26 @@ def match_speaker_to_member(speaker_last_name, member_lookup_df, congress, score
     Returns:
         dict with member info or None if no match found
     """
-    if not speaker_last_name or speaker_last_name in ('CHAIRMAN', 'CHAIRWOMAN', 'CHAIRPERSON'):
+    if not speaker_last_name or speaker_last_name in ("CHAIRMAN", "CHAIRWOMAN", "CHAIRPERSON"):
         return None
 
     # Filter to members serving in this congress
-    congress_members = member_lookup_df[member_lookup_df['congress'] == congress]
+    congress_members = member_lookup_df[member_lookup_df["congress"] == congress]
     if congress_members.empty:
         return None
 
     # Try exact match first
-    exact = congress_members[congress_members['last_name_upper'] == speaker_last_name]
+    exact = congress_members[congress_members["last_name_upper"] == speaker_last_name]
     if len(exact) == 1:
         row = exact.iloc[0]
         return {
-            'bioguide_id': row['bioguide_id'],
-            'matched_name': row['last_name'],
-            'first_name': row['first_name'],
-            'party': row['party'],
-            'state': row.get('state', ''),
-            'match_score': 100,
-            'match_type': 'exact',
+            "bioguide_id": row["bioguide_id"],
+            "matched_name": row["last_name"],
+            "first_name": row["first_name"],
+            "party": row["party"],
+            "state": row.get("state", ""),
+            "match_score": 100,
+            "match_type": "exact",
         }
 
     # If multiple exact matches, return None (ambiguous)
@@ -178,7 +170,7 @@ def match_speaker_to_member(speaker_last_name, member_lookup_df, congress, score
         return None
 
     # Fuzzy match
-    candidates = congress_members['last_name_upper'].tolist()
+    candidates = congress_members["last_name_upper"].tolist()
     if not candidates:
         return None
 
@@ -186,23 +178,23 @@ def match_speaker_to_member(speaker_last_name, member_lookup_df, congress, score
     if result is None:
         return None
 
-    matched_name, score, idx = result
+    matched_name, score, _idx = result
     if score < score_threshold:
         return None
 
-    matches = congress_members[congress_members['last_name_upper'] == matched_name]
+    matches = congress_members[congress_members["last_name_upper"] == matched_name]
     if len(matches) != 1:
         return None
 
     row = matches.iloc[0]
     return {
-        'bioguide_id': row['bioguide_id'],
-        'matched_name': row['last_name'],
-        'first_name': row['first_name'],
-        'party': row['party'],
-        'state': row.get('state', ''),
-        'match_score': score,
-        'match_type': 'fuzzy',
+        "bioguide_id": row["bioguide_id"],
+        "matched_name": row["last_name"],
+        "first_name": row["first_name"],
+        "party": row["party"],
+        "state": row.get("state", ""),
+        "match_score": score,
+        "match_type": "fuzzy",
     }
 
 
@@ -215,15 +207,34 @@ def is_likely_witness(speaker_str):
     if not speaker_str:
         return True
     # These titles are almost always legislators
-    legislator_titles = ('Mr.', 'Mrs.', 'Ms.', 'Chairman', 'Chairwoman',
-                         'The Chairman', 'The Chairwoman', 'Senator', 'Representative')
+    legislator_titles = (
+        "Mr.",
+        "Mrs.",
+        "Ms.",
+        "Chairman",
+        "Chairwoman",
+        "The Chairman",
+        "The Chairwoman",
+        "Senator",
+        "Representative",
+    )
     for title in legislator_titles:
         if speaker_str.startswith(title):
             return False
     # Titles that suggest a witness
-    witness_titles = ('Dr.', 'General', 'Admiral', 'Secretary', 'Judge',
-                      'Ambassador', 'Governor', 'Mayor', 'Professor',
-                      'Reverend', 'Father')
+    witness_titles = (
+        "Dr.",
+        "General",
+        "Admiral",
+        "Secretary",
+        "Judge",
+        "Ambassador",
+        "Governor",
+        "Mayor",
+        "Professor",
+        "Reverend",
+        "Father",
+    )
     for title in witness_titles:
         if speaker_str.startswith(title):
             return True
