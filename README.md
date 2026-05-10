@@ -4,7 +4,7 @@ Data pipeline for processing U.S. congressional hearing transcripts from the [BI
 
 ## Project Structure
 
-```
+```text
 .
 ├── README.md                  # This file
 ├── requirements.txt           # Python dependencies

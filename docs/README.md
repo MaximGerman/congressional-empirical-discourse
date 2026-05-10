@@ -4,7 +4,7 @@ Transcriptions of project resources into agent-readable (plaintext/markdown) for
 
 ## Structure
 
-```
+```text
 docs/
 ├── references/                          # Original research materials
 │   ├── haim_barak_corren_2026.md        # Full paper (40-page PDF transcription)
