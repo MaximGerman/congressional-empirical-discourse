@@ -13,6 +13,7 @@ Usage:
     .venv/bin/python -m src.pipeline
 """
 
+import logging
 import os
 
 import pandas as pd
@@ -40,6 +41,8 @@ from src.preprocess import (
     process_single_hearing,
 )
 
+logger = logging.getLogger(__name__)
+
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 
 
@@ -49,46 +52,39 @@ def ensure_output_dir():
 
 def step1_explore_data():
     """Step 1: Load, explore, and filter hearings metadata."""
-    print("=" * 60)
-    print("STEP 1: Loading and exploring hearings data")
-    print("=" * 60)
+    logger.info("STEP 1: Loading and exploring hearings data")
 
     hearings_df = load_hearings()
-    print(f"\nTotal hearings in dataset: {len(hearings_df)}")
-    print(f"Columns: {list(hearings_df.columns)}")
-    print(f"Congress range: {hearings_df['congress'].min()} - {hearings_df['congress'].max()}")
+    logger.info("Total hearings in dataset: %d", len(hearings_df))
+    logger.info("Columns: %s", list(hearings_df.columns))
+    logger.info("Congress range: %d - %d", hearings_df["congress"].min(), hearings_df["congress"].max())
 
     # Filter to target period (House only, 115th+)
     new_era = filter_hearings_by_congress(hearings_df, min_congress=115, chamber="house")
-    print(f"\nHouse hearings from 115th Congress onwards: {len(new_era)}")
-    print("\nBreakdown by congress:")
-    print(new_era["congress"].value_counts().sort_index().to_string())
+    logger.info("House hearings from 115th Congress onwards: %d", len(new_era))
+    logger.info("Breakdown by congress:\n%s", new_era["congress"].value_counts().sort_index().to_string())
 
     return hearings_df, new_era
 
 
 def step2_load_transcripts(new_era):
     """Step 2: Load transcripts for target hearings."""
-    print("\n" + "=" * 60)
-    print("STEP 2: Loading transcripts for target hearings")
-    print("=" * 60)
+    logger.info("STEP 2: Loading transcripts for target hearings")
 
     target_ids = new_era["hearing_id"].tolist()
-    print(f"Loading transcripts for {len(target_ids)} hearings (reading ~5.4GB file in chunks)...")
+    logger.info("Loading transcripts for %d hearings (reading ~5.4GB file in chunks)...", len(target_ids))
 
     texts_df = load_hearings_texts_chunked(target_ids)
-    print(f"Loaded {len(texts_df)} transcript records")
-    print(f"Columns: {list(texts_df.columns)}")
+    logger.info("Loaded %d transcript records", len(texts_df))
+    logger.info("Columns: %s", list(texts_df.columns))
 
     # Check text availability
     has_text = texts_df[TEXT_COLUMN].notna() & (texts_df[TEXT_COLUMN].str.len() > 100)
-    print(f"Records with substantial text: {has_text.sum()} / {len(texts_df)}")
+    logger.info("Records with substantial text: %d / %d", has_text.sum(), len(texts_df))
 
     # Show a sample
     sample_row = texts_df[has_text].iloc[0]
     text = str(sample_row[TEXT_COLUMN])
-    print(f"\nSample transcript (hearing_id={sample_row['hearing_id']}):")
-    # Find the dialogue section
     lines = text.split("\n")
     for i, line in enumerate(lines):
         if (
@@ -98,8 +94,8 @@ def step2_load_transcripts(new_era):
         ):
             start = max(0, i)
             end = min(len(lines), i + 15)
-            for j in range(start, end):
-                print(f"  {lines[j]}")
+            sample_lines = "\n".join(f"  {lines[j]}" for j in range(start, end))
+            logger.debug("Sample transcript (hearing_id=%s):\n%s", sample_row["hearing_id"], sample_lines)
             break
 
     return texts_df
@@ -107,16 +103,14 @@ def step2_load_transcripts(new_era):
 
 def step3_process_transcripts(new_era, texts_df):
     """Step 3: Process all transcripts into sentence-level records."""
-    print("\n" + "=" * 60)
-    print("STEP 3: Processing transcripts into sentence-level format")
-    print("=" * 60)
+    logger.info("STEP 3: Processing transcripts into sentence-level format")
 
     download_nltk_deps()
 
     # Only process hearings with actual text
     has_text = texts_df[TEXT_COLUMN].notna() & (texts_df[TEXT_COLUMN].str.len() > 100)
     processable = texts_df[has_text]
-    print(f"Processing {len(processable)} hearings with text...")
+    logger.info("Processing %d hearings with text...", len(processable))
 
     all_records = []
     failed_hearings = []
@@ -136,25 +130,23 @@ def step3_process_transcripts(new_era, texts_df):
             failed_hearings.append({"hearing_id": hearing_id, "error": str(e)})
 
     sentences_df = pd.DataFrame(all_records)
-    print(f"\nTotal sentences extracted: {len(sentences_df)}")
-    print(f"Hearings with no speakers found: {empty_hearings}")
-    print(f"Failed hearings: {len(failed_hearings)}")
+    logger.info("Total sentences extracted: %d", len(sentences_df))
+    logger.info("Hearings with no speakers found: %d", empty_hearings)
+    logger.info("Failed hearings: %d", len(failed_hearings))
 
     if not sentences_df.empty:
-        print(f"Unique speakers: {sentences_df['speaker'].nunique()}")
-        print(f"Unique hearings with sentences: {sentences_df['hearing_id'].nunique()}")
+        logger.info("Unique speakers: %d", sentences_df["speaker"].nunique())
+        logger.info("Unique hearings with sentences: %d", sentences_df["hearing_id"].nunique())
 
     return sentences_df, failed_hearings
 
 
 def step4_enrich_metadata(sentences_df, new_era):
     """Step 4: Enrich sentence records with political metadata."""
-    print("\n" + "=" * 60)
-    print("STEP 4: Enriching with political metadata")
-    print("=" * 60)
+    logger.info("STEP 4: Enriching with political metadata")
 
     if sentences_df.empty:
-        print("No sentences to enrich.")
+        logger.warning("No sentences to enrich.")
         return sentences_df
 
     # Load hearing-level metadata
@@ -182,28 +174,28 @@ def step4_enrich_metadata(sentences_df, new_era):
     sentences_df["is_witness"] = sentences_df["speaker"].apply(is_likely_witness)
     n_witness = sentences_df["is_witness"].sum()
     n_total = len(sentences_df)
-    print(f"Identified {n_witness} witness sentences ({n_witness / n_total * 100:.1f}%) -- filtering out")
+    logger.info("Identified %d witness sentences (%.1f%%) -- filtering out", n_witness, n_witness / n_total * 100)
 
     legislators_df = sentences_df[~sentences_df["is_witness"]].copy()
-    print(f"Legislator sentences remaining: {len(legislators_df)}")
+    logger.info("Legislator sentences remaining: %d", len(legislators_df))
 
     # Match speakers to members using vectorized merge + fuzzy fallback
     members_df = load_members()
     terms_df = load_members_terms()
     member_lookup = build_member_lookup(members_df, terms_df)
-    print(f"Member lookup table: {len(member_lookup)} entries")
+    logger.info("Member lookup table: %d entries", len(member_lookup))
 
     # Load BICAM's direct hearing-member mapping
     hearing_members = load_hearings_members()
     hearing_member_map = build_hearing_member_map(hearing_members, members_df)
 
-    print("Matching speakers to members database (vectorized)...")
+    logger.info("Matching speakers to members database (vectorized)...")
 
     # Strategy: match unique (hearing_id, speaker_last_name) pairs, then merge back.
     # This reduces millions of lookups to thousands.
 
     unique_pairs = legislators_df[["hearing_id", "speaker_last_name", "congress"]].drop_duplicates()
-    print(f"Unique (hearing, speaker) pairs to match: {len(unique_pairs)}")
+    logger.info("Unique (hearing, speaker) pairs to match: %d", len(unique_pairs))
 
     # Step A: Merge against hearing_member_map (exact match on hearing_id + last_name)
     # Only keep hearing-member combos where exactly one member matches that last name
@@ -247,7 +239,7 @@ def step4_enrich_metadata(sentences_df, new_era):
         # Step C: For still unmatched, try fuzzy matching (only unique last_name + congress combos)
         still_unmatched = congress_matched[congress_matched["bioguide_id"].isna()]
         fuzzy_pairs = still_unmatched[["speaker_last_name", "congress"]].drop_duplicates()
-        print(f"Fuzzy matching {len(fuzzy_pairs)} unique (name, congress) pairs...")
+        logger.info("Fuzzy matching %d unique (name, congress) pairs...", len(fuzzy_pairs))
 
         fuzzy_results = {}
         for _, fp in tqdm(fuzzy_pairs.iterrows(), total=len(fuzzy_pairs), desc="Fuzzy matching"):
@@ -295,9 +287,8 @@ def step4_enrich_metadata(sentences_df, new_era):
     # Report match rate
     matched_count = legislators_df["bioguide_id"].notna().sum()
     total = len(legislators_df)
-    print(f"\nMatch rate: {matched_count}/{total} ({matched_count / total * 100:.1f}%)")
-    print("\nMatch type breakdown:")
-    print(legislators_df["match_type"].value_counts().to_string())
+    logger.info("Match rate: %d/%d (%.1f%%)", matched_count, total, matched_count / total * 100)
+    logger.info("Match type breakdown:\n%s", legislators_df["match_type"].value_counts().to_string())
 
     # Add majority/minority status (vectorized)
     majority_map = {
@@ -310,10 +301,8 @@ def step4_enrich_metadata(sentences_df, new_era):
         lambda r: majority_map.get((r["party"], r["congress"])) if pd.notna(r["party"]) else None, axis=1
     )
 
-    print("\nParty breakdown:")
-    print(legislators_df["party"].value_counts().to_string())
-    print("\nMinority status (1=minority, 0=majority):")
-    print(legislators_df["minority"].value_counts().to_string())
+    logger.info("Party breakdown:\n%s", legislators_df["party"].value_counts().to_string())
+    logger.info("Minority status (1=minority, 0=majority):\n%s", legislators_df["minority"].value_counts().to_string())
 
     # Drop helper columns
     legislators_df = legislators_df.drop(columns=["is_witness"], errors="ignore")
@@ -323,20 +312,18 @@ def step4_enrich_metadata(sentences_df, new_era):
 
 def step5_create_sample(legislators_df, sample_size=10000, seed=42):
     """Step 5: Create a representative sample for silver labeling."""
-    print("\n" + "=" * 60)
-    print("STEP 5: Creating representative sample for silver labeling")
-    print("=" * 60)
+    logger.info("STEP 5: Creating representative sample for silver labeling")
 
     if legislators_df.empty:
-        print("No data to sample from.")
+        logger.warning("No data to sample from.")
         return pd.DataFrame()
 
     # Only sample from matched legislators
     matched = legislators_df[legislators_df["bioguide_id"].notna()].copy()
-    print(f"Matched legislator sentences available: {len(matched)}")
+    logger.info("Matched legislator sentences available: %d", len(matched))
 
     if len(matched) <= sample_size:
-        print(f"Dataset smaller than target sample ({sample_size}), using all data")
+        logger.info("Dataset smaller than target sample (%d), using all data", sample_size)
         sample = matched.copy()
     else:
         # Stratified sample by congress
@@ -356,19 +343,17 @@ def step5_create_sample(legislators_df, sample_size=10000, seed=42):
             extra = remaining.sample(min(len(remaining), sample_size - len(sample)), random_state=seed)
             sample = pd.concat([sample, extra], ignore_index=True)
 
-    print(f"\nSample size: {len(sample)}")
-    print("\nCongress distribution:")
-    print(sample["congress"].value_counts().sort_index().to_string())
-    print("\nParty distribution:")
-    print(sample["party"].value_counts().to_string())
-    print("\nMinority distribution:")
-    print(sample["minority"].value_counts().to_string())
+    logger.info("Sample size: %d", len(sample))
+    logger.info("Congress distribution:\n%s", sample["congress"].value_counts().sort_index().to_string())
+    logger.info("Party distribution:\n%s", sample["party"].value_counts().to_string())
+    logger.info("Minority distribution:\n%s", sample["minority"].value_counts().to_string())
 
     return sample
 
 
 def run_pipeline():
     """Run the full pipeline end-to-end."""
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(name)s | %(message)s")
     ensure_output_dir()
 
     # Step 1: Explore and filter
@@ -377,9 +362,9 @@ def run_pipeline():
     # Step 2-3: Load and process transcripts (skip if raw CSV already exists)
     raw_path = os.path.join(OUTPUT_DIR, "sentences_raw.csv")
     if os.path.exists(raw_path):
-        print(f"\nFound existing raw sentences at {raw_path}, loading...")
+        logger.info("Found existing raw sentences at %s, loading...", raw_path)
         sentences_df = pd.read_csv(raw_path)
-        print(f"Loaded {len(sentences_df)} sentences from cache")
+        logger.info("Loaded %d sentences from cache", len(sentences_df))
     else:
         # Step 2: Load transcripts
         texts_df = step2_load_transcripts(new_era)
@@ -388,12 +373,12 @@ def run_pipeline():
         sentences_df, _failed = step3_process_transcripts(new_era, texts_df)
 
         if sentences_df.empty:
-            print("\nERROR: No sentences extracted. Check transcript format.")
+            logger.error("No sentences extracted. Check transcript format.")
             return
 
         # Save raw sentences
         sentences_df.to_csv(raw_path, index=False)
-        print(f"\nRaw sentences saved to: {raw_path}")
+        logger.info("Raw sentences saved to: %s", raw_path)
 
     # Step 4: Enrich with metadata
     legislators_df = step4_enrich_metadata(sentences_df, new_era)
@@ -401,7 +386,7 @@ def run_pipeline():
     # Save enriched data
     enriched_path = os.path.join(OUTPUT_DIR, "sentences_enriched.csv")
     legislators_df.to_csv(enriched_path, index=False)
-    print(f"\nEnriched legislator sentences saved to: {enriched_path}")
+    logger.info("Enriched legislator sentences saved to: %s", enriched_path)
 
     # Step 5: Create sample
     sample = step5_create_sample(legislators_df)
@@ -409,22 +394,16 @@ def run_pipeline():
     # Save sample
     sample_path = os.path.join(OUTPUT_DIR, "sample_for_labeling.csv")
     sample.to_csv(sample_path, index=False)
-    print(f"\nSilver labeling sample saved to: {sample_path}")
+    logger.info("Silver labeling sample saved to: %s", sample_path)
 
     # Summary
-    print("\n" + "=" * 60)
-    print("PIPELINE COMPLETE")
-    print("=" * 60)
-    print(f"  Total hearings in target period: {len(new_era)}")
-    print(f"  Hearings with text: {len(texts_df)}")
-    print(f"  Total sentences extracted: {len(sentences_df)}")
-    print(f"  Legislator sentences (filtered): {len(legislators_df)}")
-    print(f"  Matched to member database: {legislators_df['bioguide_id'].notna().sum()}")
-    print(f"  Silver labeling sample: {len(sample)}")
-    print(f"\nOutput files in: {OUTPUT_DIR}/")
-    print("  sentences_raw.csv")
-    print("  sentences_enriched.csv")
-    print("  sample_for_labeling.csv")
+    logger.info("PIPELINE COMPLETE")
+    logger.info("  Total hearings in target period: %d", len(new_era))
+    logger.info("  Total sentences extracted: %d", len(sentences_df))
+    logger.info("  Legislator sentences (filtered): %d", len(legislators_df))
+    logger.info("  Matched to member database: %d", legislators_df["bioguide_id"].notna().sum())
+    logger.info("  Silver labeling sample: %d", len(sample))
+    logger.info("Output files in: %s/", OUTPUT_DIR)
 
 
 if __name__ == "__main__":

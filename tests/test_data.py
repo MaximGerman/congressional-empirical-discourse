@@ -1,5 +1,4 @@
 import pandas as pd
-import pytest
 
 from src.data import (
     build_hearing_member_map,
