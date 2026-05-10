@@ -2,10 +2,10 @@
 name = "congressional-empirical-discourse"
 version = "0.1.0"
 description = "Data pipeline for processing U.S. congressional hearing transcripts into sentence-level records with political metadata"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 
 [tool.ruff]
-target-version = "py39"
+target-version = "py310"
 line-length = 120
 
 [tool.ruff.lint]

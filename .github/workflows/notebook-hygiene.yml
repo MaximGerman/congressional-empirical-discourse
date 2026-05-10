@@ -1,0 +1,43 @@
+name: Notebook Hygiene
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  check-outputs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install nbstripout
+        run: pip install nbstripout
+
+      - name: Check for notebook outputs
+        run: |
+          found=0
+          for nb in $(find notebooks -name '*.ipynb' 2>/dev/null); do
+            if python -c "
+          import json, sys
+          nb = json.load(open('$nb'))
+          has_output = any(
+              cell.get('outputs') or cell.get('execution_count')
+              for cell in nb.get('cells', [])
+              if cell['cell_type'] == 'code'
+          )
+          sys.exit(0 if has_output else 1)
+          " 2>/dev/null; then
+              echo "::error file=$nb::Notebook has cell outputs. Run: nbstripout $nb"
+              found=1
+            fi
+          done
+          if [ "$found" -eq 1 ]; then
+            echo ""
+            echo "Notebooks must be committed without outputs to keep git history clean."
+            echo "Run 'nbstripout notebooks/*.ipynb' before committing."
+            exit 1
+          fi
