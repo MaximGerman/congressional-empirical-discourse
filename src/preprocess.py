@@ -23,7 +23,7 @@ SPEAKER_PATTERN = re.compile(
 )
 
 # Pattern for "The Chairman." / "The Chairwoman." without a last name
-THE_CHAIR_PATTERN = re.compile(r"^\s{2,}(The\s+Chair(?:man|woman))\.")
+THE_CHAIR_PATTERN = re.compile(r"^\s{2,}(The\s+Chair(?:man|woman))\.", re.IGNORECASE)
 
 
 def segment_speakers(transcript_text):

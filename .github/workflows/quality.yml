@@ -1,22 +1,47 @@
-name: Notebook Hygiene
+name: Quality
 
 on:
   pull_request:
     branches: [main]
 
 jobs:
-  check-outputs:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
+        with: { python-version: "3.10" }
+      - run: pip install ruff
+      - run: ruff format --check src/ notebooks/
+      - run: ruff check src/ notebooks/
 
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.10" }
+      - run: pip install mypy pandas-stubs types-tqdm
+      - run: pip install -r requirements.txt
+      - run: mypy src/
+
+  docs-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.10" }
+      - run: pip install pymarkdownlnt
+      - run: pymarkdown --config .pymarkdown.json scan README.md docs/
+
+  notebook-hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.10" }
       - name: Install nbstripout
         run: pip install nbstripout
-
       - name: Check for notebook outputs
         run: |
           found=0

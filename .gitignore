@@ -55,6 +55,7 @@ docs/_build/
 # Large text/data files
 *.txt
 *.json
+!.pymarkdown.json
 *.jsonl
 
 # Models/checkpoints
