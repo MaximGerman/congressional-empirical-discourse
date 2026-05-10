@@ -8,8 +8,15 @@ format:
 	ruff format src/ notebooks/
 	ruff check --fix src/ notebooks/
 
-check: lint
+check: lint typecheck
 	ruff format --check src/ notebooks/
+
+# Tests & Typechecking
+typecheck:
+	mypy src/
+
+test:
+	python -m pytest tests/ -v
 
 # Pipeline
 pipeline:
