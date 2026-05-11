@@ -75,19 +75,57 @@ def segment_speakers(transcript_text):
     return chunks
 
 
+TITLE_WORDS = {
+    "MR", "MR.", "MRS", "MRS.", "MS", "MS.", "DR", "DR.",
+    "CHAIRMAN", "CHAIRWOMAN", "CHAIRPERSON",
+    "SENATOR", "REPRESENTATIVE",
+    "GENERAL", "ADMIRAL", "SECRETARY", "JUDGE",
+    "AMBASSADOR", "GOVERNOR", "MAYOR", "PROFESSOR",
+    "REVEREND", "FATHER", "THE",
+}
+
+
+def extract_name_parts(speaker_str):
+    """
+    Extract the full name portion from a speaker string, stripping title words.
+
+    Returns (full_name_upper, last_word_upper) where full_name is e.g. "JACKSON LEE"
+    and last_word is "LEE". For single-word names they are the same.
+
+    Examples:
+        "Mr. SMITH"           -> ("SMITH", "SMITH")
+        "Ms. Jackson Lee"     -> ("JACKSON LEE", "LEE")
+        "Mr. Van Orden"       -> ("VAN ORDEN", "ORDEN")
+        "The Chairman"        -> ("CHAIRMAN", "CHAIRMAN")
+        "Chairman SMITH"      -> ("SMITH", "SMITH")
+    """
+    if not speaker_str:
+        return None, None
+    parts = speaker_str.strip().split()
+    if not parts:
+        return None, None
+    # Strip title words from the front
+    name_parts = []
+    for p in parts:
+        if p.strip(".").upper() in TITLE_WORDS:
+            continue
+        name_parts.append(p.strip(".").upper())
+    if not name_parts:
+        # All tokens were titles (e.g. "The Chairman")
+        last_word = parts[-1].strip(".").upper()
+        return last_word, last_word
+    full_name = " ".join(name_parts)
+    last_word = name_parts[-1]
+    return full_name, last_word
+
+
 def extract_last_name(speaker_str):
     """
     Extract the last name from a speaker string like 'Mr. SMITH' or 'Chairman JONES'.
-    Returns uppercase last name.
+    Returns uppercase last name (full multi-word name, e.g. "JACKSON LEE").
     """
-    if not speaker_str:
-        return None
-    parts = speaker_str.strip().split()
-    if not parts:
-        return None
-    # Last token is the last name (handles "Mr. SMITH", "The CHAIRMAN", etc.)
-    last_name = parts[-1].strip(".").upper()
-    return last_name
+    full_name, _last_word = extract_name_parts(speaker_str)
+    return full_name
 
 
 def create_sentence_records(speech_chunks, hearing_id):
@@ -107,10 +145,12 @@ def create_sentence_records(speech_chunks, hearing_id):
             # Skip very short sentences (likely parsing artifacts)
             if len(sent.strip()) < 5:
                 continue
+            full_name, last_word = extract_name_parts(chunk["speaker"])
             record = {
                 "hearing_id": hearing_id,
                 "speaker": chunk["speaker"],
-                "speaker_last_name": extract_last_name(chunk["speaker"]),
+                "speaker_last_name": full_name,
+                "speaker_last_word": last_word,
                 "context_before": sentences[i - 1] if i > 0 else "",
                 "target_sentence": sent,
                 "context_after": sentences[i + 1] if i < len(sentences) - 1 else "",
@@ -130,15 +170,40 @@ def process_single_hearing(hearing_id, transcript_text):
     return create_sentence_records(chunks, hearing_id)
 
 
-def match_speaker_to_member(speaker_last_name, member_lookup_df, congress, score_threshold=85):
+def _try_exact_match(name, congress_members):
+    """Try exact last_name_upper match; return member dict or None."""
+    exact = congress_members[congress_members["last_name_upper"] == name]
+    if len(exact) == 1:
+        row = exact.iloc[0]
+        return {
+            "bioguide_id": row["bioguide_id"],
+            "matched_name": row["last_name"],
+            "first_name": row["first_name"],
+            "party": row["party"],
+            "state": row.get("state", ""),
+            "match_score": 100,
+            "match_type": "exact",
+        }
+    return None
+
+
+def match_speaker_to_member(
+    speaker_last_name, member_lookup_df, congress, score_threshold=85, speaker_last_word=None
+):
     """
-    Match a speaker's last name to a known member of Congress using fuzzy matching.
+    Match a speaker's last name to a known member of Congress.
+
+    Tries in order:
+    1. Exact match on full name (e.g. "JACKSON LEE")
+    2. Exact match on last word only (e.g. "LEE") — for multi-word names
+    3. Fuzzy match on full name
 
     Args:
-        speaker_last_name: Uppercase last name from transcript
+        speaker_last_name: Uppercase full name from transcript (e.g. "JACKSON LEE")
         member_lookup_df: DataFrame from build_member_lookup()
         congress: Congress number for filtering
         score_threshold: Minimum fuzzy match score (0-100)
+        speaker_last_word: Uppercase last word only (e.g. "LEE"), used as fallback
 
     Returns:
         dict with member info or None if no match found
@@ -151,23 +216,17 @@ def match_speaker_to_member(speaker_last_name, member_lookup_df, congress, score
     if congress_members.empty:
         return None
 
-    # Try exact match first
-    exact = congress_members[congress_members["last_name_upper"] == speaker_last_name]
-    if len(exact) == 1:
-        row = exact.iloc[0]
-        return {
-            "bioguide_id": row["bioguide_id"],
-            "matched_name": row["last_name"],
-            "first_name": row["first_name"],
-            "party": row["party"],
-            "state": row.get("state", ""),
-            "match_score": 100,
-            "match_type": "exact",
-        }
+    # Try exact match on full name first
+    retVal = _try_exact_match(speaker_last_name, congress_members)
+    if retVal:
+        return retVal
 
-    # If multiple exact matches, return None (ambiguous)
-    if len(exact) > 1:
-        return None
+    # For multi-word names, try exact match on last word only
+    if speaker_last_word and speaker_last_word != speaker_last_name:
+        retVal = _try_exact_match(speaker_last_word, congress_members)
+        if retVal:
+            retVal["match_type"] = "exact_last_word"
+            return retVal
 
     # Fuzzy match
     candidates = congress_members["last_name_upper"].tolist()

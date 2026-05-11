@@ -3,6 +3,7 @@ import pandas as pd
 from src.data import (
     build_hearing_member_map,
     build_member_lookup,
+    build_member_lookup_from_hearing_members,
     filter_hearings_by_congress,
     get_majority_status,
 )
@@ -88,6 +89,38 @@ def test_build_hearing_member_map():
     assert len(hm_map) == 2
     assert "last_name_upper" in hm_map.columns
     assert set(hm_map["last_name_upper"]) == {"SMITH", "JONES"}
+
+
+def test_build_member_lookup_from_hearing_members():
+    hearings_members = pd.DataFrame(
+        {
+            "hearing_id": [10, 10, 20],
+            "bioguide_id": ["A000001", "B000002", "A000001"],
+        }
+    )
+    members = pd.DataFrame(
+        {
+            "bioguide_id": ["A000001", "B000002"],
+            "last_name": ["Smith", "Jones"],
+            "first_name": ["John", "Mary"],
+            "party": ["Republican", "Democratic"],
+            "state": ["CA", "NY"],
+        }
+    )
+    hearings = pd.DataFrame(
+        {
+            "hearing_id": [10, 20],
+            "congress": [118, 118],
+            "chamber": ["house", "house"],
+        }
+    )
+
+    lookup = build_member_lookup_from_hearing_members(hearings_members, members, hearings)
+    # Should have 2 unique (bioguide_id, congress) pairs
+    assert len(lookup) == 2
+    assert set(lookup["bioguide_id"]) == {"A000001", "B000002"}
+    assert all(lookup["congress"] == 118)
+    assert "last_name_upper" in lookup.columns
 
 
 def test_get_majority_status_majority():

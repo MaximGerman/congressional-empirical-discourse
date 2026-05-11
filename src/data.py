@@ -107,6 +107,29 @@ def build_member_lookup(members_df, terms_df, target_congresses=None):
     return retVal
 
 
+def build_member_lookup_from_hearing_members(hearings_members_df, members_df, hearings_df):
+    """
+    Build a member lookup from hearing_members data, augmenting coverage for congresses
+    where members_terms.csv is incomplete (especially 118th Congress).
+
+    Returns a DataFrame with the same schema as build_member_lookup():
+        bioguide_id, last_name, first_name, party, state, congress, last_name_upper
+    """
+    # Join hearing_members with hearings to get congress numbers
+    hm_with_congress = hearings_members_df.merge(
+        hearings_df[["hearing_id", "congress"]], on="hearing_id", how="left"
+    )
+    # Deduplicate: one entry per (bioguide_id, congress)
+    hm_unique = hm_with_congress[["bioguide_id", "congress"]].drop_duplicates()
+
+    # Merge with member info
+    member_info = members_df[["bioguide_id", "last_name", "first_name", "party", "state"]].copy()
+    retVal = hm_unique.merge(member_info, on="bioguide_id", how="left")
+    retVal["last_name_upper"] = retVal["last_name"].str.upper()
+
+    return retVal
+
+
 def build_hearing_member_map(hearings_members_df, members_df):
     """
     Build a map from (hearing_id, bioguide_id) to member info.

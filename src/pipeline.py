@@ -24,6 +24,7 @@ from src.data import (
     TEXT_COLUMN,
     build_hearing_member_map,
     build_member_lookup,
+    build_member_lookup_from_hearing_members,
     filter_hearings_by_congress,
     get_majority_status,
     load_hearings,
@@ -36,6 +37,7 @@ from src.data import (
 )
 from src.preprocess import (
     download_nltk_deps,
+    extract_name_parts,
     is_likely_witness,
     match_speaker_to_member,
     process_single_hearing,
@@ -141,6 +143,77 @@ def step3_process_transcripts(new_era, texts_df):
     return sentences_df, failed_hearings
 
 
+def _vectorized_merge_match(pairs_df, matchable_df, left_name_col, match_type_label):
+    """
+    Vectorized merge-based matching of speaker names to member records.
+
+    Tries matching on the full speaker_last_name first. For unmatched rows where
+    speaker_last_word differs, retries with the last-word-only fallback.
+
+    Args:
+        pairs_df: DataFrame with columns [hearing_id|congress, speaker_last_name,
+                  speaker_last_word, ...] — the pairs to match.
+        matchable_df: DataFrame with [join_key, last_name_upper, bioguide_id, ...] —
+                      the candidates, pre-filtered to unique name matches only.
+        left_name_col: The join key besides the name ("hearing_id" or "congress").
+        match_type_label: Label for the match_type column (e.g. "hearing_member_exact").
+
+    Returns:
+        pairs_df with added columns: bioguide_id, last_name, first_name, party,
+        state, match_score, match_type.
+    """
+    member_cols = ["last_name_upper", "bioguide_id", "last_name", "first_name", "party", "state"]
+    merge_cols = [left_name_col] + [c for c in member_cols if c in matchable_df.columns]
+
+    # First pass: match on full speaker_last_name
+    retVal = pairs_df.merge(
+        matchable_df[merge_cols],
+        left_on=[left_name_col, "speaker_last_name"],
+        right_on=[left_name_col, "last_name_upper"],
+        how="left",
+        suffixes=("", "_full"),
+    )
+
+    # Second pass: for unmatched multi-word names, try speaker_last_word
+    unmatched = retVal["bioguide_id"].isna()
+    has_fallback = retVal["speaker_last_word"] != retVal["speaker_last_name"]
+    fallback_mask = unmatched & has_fallback
+
+    if fallback_mask.any():
+        fallback_pairs = retVal.loc[fallback_mask, [left_name_col, "speaker_last_word"]].copy()
+        fallback_matched = fallback_pairs.merge(
+            matchable_df[merge_cols],
+            left_on=[left_name_col, "speaker_last_word"],
+            right_on=[left_name_col, "last_name_upper"],
+            how="left",
+        )
+        for col in ["bioguide_id", "last_name", "first_name", "party", "state"]:
+            if col in fallback_matched.columns:
+                retVal.loc[fallback_mask, col] = fallback_matched[col].values
+
+    retVal["match_type"] = None
+    retVal.loc[retVal["bioguide_id"].notna(), "match_type"] = match_type_label
+    retVal["match_score"] = None
+    retVal.loc[retVal["bioguide_id"].notna(), "match_score"] = 100
+
+    # Clean up merge artifacts
+    retVal = retVal.drop(columns=["last_name_upper"], errors="ignore")
+
+    return retVal
+
+
+def _build_unique_matchable(lookup_df, group_cols):
+    """
+    From a lookup DataFrame, keep only entries where the name is unambiguous
+    within the group (e.g. one SMITH per hearing or per congress).
+    """
+    counts = lookup_df.groupby(group_cols + ["last_name_upper"]).size().reset_index(name="_count")
+    unique = counts[counts["_count"] == 1][group_cols + ["last_name_upper"]]
+    deduped = lookup_df.drop_duplicates(subset=group_cols + ["last_name_upper"])
+    retVal = deduped.merge(unique, on=group_cols + ["last_name_upper"])
+    return retVal
+
+
 def step4_enrich_metadata(sentences_df, new_era):
     """Step 4: Enrich sentence records with political metadata."""
     logger.info("STEP 4: Enriching with political metadata")
@@ -170,7 +243,12 @@ def step4_enrich_metadata(sentences_df, new_era):
     first_date = hearings_dates.drop_duplicates(subset="hearing_id", keep="first")
     sentences_df = sentences_df.merge(first_date[["hearing_id", "hearing_date"]], on="hearing_id", how="left")
 
-    # Filter out likely witnesses
+    # Recompute name columns from speaker string (handles cached data from old pipeline)
+    name_parts = sentences_df["speaker"].apply(extract_name_parts)
+    sentences_df["speaker_last_name"] = name_parts.apply(lambda x: x[0])
+    sentences_df["speaker_last_word"] = name_parts.apply(lambda x: x[1])
+
+    # Filter out likely witnesses (title-based heuristic)
     sentences_df["is_witness"] = sentences_df["speaker"].apply(is_likely_witness)
     n_witness = sentences_df["is_witness"].sum()
     n_total = len(sentences_df)
@@ -179,96 +257,99 @@ def step4_enrich_metadata(sentences_df, new_era):
     legislators_df = sentences_df[~sentences_df["is_witness"]].copy()
     logger.info("Legislator sentences remaining: %d", len(legislators_df))
 
-    # Match speakers to members using vectorized merge + fuzzy fallback
+    # Build member lookup from terms (primary) + hearing_members (fills gaps, esp. 118th)
     members_df = load_members()
     terms_df = load_members_terms()
-    member_lookup = build_member_lookup(members_df, terms_df)
-    logger.info("Member lookup table: %d entries", len(member_lookup))
+    member_lookup_terms = build_member_lookup(members_df, terms_df)
 
-    # Load BICAM's direct hearing-member mapping
     hearing_members = load_hearings_members()
+    member_lookup_hm = build_member_lookup_from_hearing_members(hearing_members, members_df, new_era)
+
+    # Combine both sources, deduplicate
+    member_lookup = pd.concat([member_lookup_terms, member_lookup_hm], ignore_index=True)
+    member_lookup = member_lookup.drop_duplicates(subset=["bioguide_id", "congress"])
+    logger.info(
+        "Member lookup table: %d entries (terms: %d, hearing_members added: %d)",
+        len(member_lookup),
+        len(member_lookup_terms),
+        len(member_lookup) - len(member_lookup_terms),
+    )
+    for c in sorted(member_lookup["congress"].dropna().unique()):
+        n = member_lookup[member_lookup["congress"] == c]["bioguide_id"].nunique()
+        logger.info("  Congress %d: %d unique members", int(c), n)
+
+    # Build hearing-member map for direct hearing-level matching
     hearing_member_map = build_hearing_member_map(hearing_members, members_df)
 
-    logger.info("Matching speakers to members database (vectorized)...")
+    logger.info("Matching speakers to members database...")
 
-    # Strategy: match unique (hearing_id, speaker_last_name) pairs, then merge back.
-    # This reduces millions of lookups to thousands.
-
-    unique_pairs = legislators_df[["hearing_id", "speaker_last_name", "congress"]].drop_duplicates()
+    # Strategy: match unique (hearing_id, speaker_last_name, speaker_last_word) pairs,
+    # then merge results back. This reduces millions of lookups to thousands.
+    unique_pairs = legislators_df[
+        ["hearing_id", "speaker_last_name", "speaker_last_word", "congress"]
+    ].drop_duplicates()
     logger.info("Unique (hearing, speaker) pairs to match: %d", len(unique_pairs))
 
-    # Step A: Merge against hearing_member_map (exact match on hearing_id + last_name)
-    # Only keep hearing-member combos where exactly one member matches that last name
-    hm_deduped = hearing_member_map.drop_duplicates(subset=["hearing_id", "last_name_upper"])
-    hm_counts = hearing_member_map.groupby(["hearing_id", "last_name_upper"]).size().reset_index(name="_count")
-    hm_unique = hm_counts[hm_counts["_count"] == 1][["hearing_id", "last_name_upper"]]
-    hm_matchable = hm_deduped.merge(hm_unique, on=["hearing_id", "last_name_upper"])
+    # --- Step A: hearing_member_exact (hearing_id + name) ---
+    hm_matchable = _build_unique_matchable(hearing_member_map, ["hearing_id"])
+    matched = _vectorized_merge_match(unique_pairs, hm_matchable, "hearing_id", "hearing_member_exact")
 
-    matched_via_hearing = unique_pairs.merge(
-        hm_matchable[["hearing_id", "last_name_upper", "bioguide_id", "last_name", "first_name", "party", "state"]],
-        left_on=["hearing_id", "speaker_last_name"],
-        right_on=["hearing_id", "last_name_upper"],
-        how="left",
-    )
-    matched_via_hearing["match_type"] = None
-    matched_via_hearing.loc[matched_via_hearing["bioguide_id"].notna(), "match_type"] = "hearing_member_exact"
-    matched_via_hearing.loc[matched_via_hearing["bioguide_id"].notna(), "match_score"] = 100
+    # --- Step B: congress_exact (congress + name) ---
+    unmatched_mask = matched["bioguide_id"].isna()
+    unmatched_b = matched[unmatched_mask][
+        ["hearing_id", "speaker_last_name", "speaker_last_word", "congress"]
+    ].copy()
 
-    # Step B: For unmatched pairs, try exact match against all members in that congress
-    unmatched_mask = matched_via_hearing["bioguide_id"].isna()
-    unmatched = matched_via_hearing[unmatched_mask][["hearing_id", "speaker_last_name", "congress"]].copy()
+    if not unmatched_b.empty:
+        ml_matchable = _build_unique_matchable(member_lookup, ["congress"])
+        congress_matched = _vectorized_merge_match(unmatched_b, ml_matchable, "congress", "congress_exact")
 
-    if not unmatched.empty:
-        # Exact match against member_lookup (all House members by congress)
-        ml_counts = member_lookup.groupby(["congress", "last_name_upper"]).size().reset_index(name="_count")
-        ml_unique = ml_counts[ml_counts["_count"] == 1][["congress", "last_name_upper"]]
-        ml_deduped = member_lookup.drop_duplicates(subset=["congress", "last_name_upper"])
-        ml_matchable = ml_deduped.merge(ml_unique, on=["congress", "last_name_upper"])
-
-        congress_matched = unmatched.merge(
-            ml_matchable[["congress", "last_name_upper", "bioguide_id", "last_name", "first_name", "party", "state"]],
-            left_on=["congress", "speaker_last_name"],
-            right_on=["congress", "last_name_upper"],
-            how="left",
-        )
-        congress_matched["match_type"] = None
-        congress_matched.loc[congress_matched["bioguide_id"].notna(), "match_type"] = "congress_exact"
-        congress_matched["match_score"] = None
-        congress_matched.loc[congress_matched["bioguide_id"].notna(), "match_score"] = 100
-
-        # Step C: For still unmatched, try fuzzy matching (only unique last_name + congress combos)
-        still_unmatched = congress_matched[congress_matched["bioguide_id"].isna()]
-        fuzzy_pairs = still_unmatched[["speaker_last_name", "congress"]].drop_duplicates()
-        logger.info("Fuzzy matching %d unique (name, congress) pairs...", len(fuzzy_pairs))
-
-        fuzzy_results = {}
-        for _, fp in tqdm(fuzzy_pairs.iterrows(), total=len(fuzzy_pairs), desc="Fuzzy matching"):
-            result = match_speaker_to_member(fp["speaker_last_name"], member_lookup, fp["congress"])
-            fuzzy_results[(fp["speaker_last_name"], fp["congress"])] = result
-
-        # Apply fuzzy results back to congress_matched
-        for idx, row in congress_matched[congress_matched["bioguide_id"].isna()].iterrows():
-            key = (row["speaker_last_name"], row["congress"])
-            result = fuzzy_results.get(key)
-            if result:
-                congress_matched.at[idx, "bioguide_id"] = result["bioguide_id"]
-                congress_matched.at[idx, "last_name"] = result["matched_name"]
-                congress_matched.at[idx, "first_name"] = result["first_name"]
-                congress_matched.at[idx, "party"] = result["party"]
-                congress_matched.at[idx, "state"] = result["state"]
-                congress_matched.at[idx, "match_score"] = result["match_score"]
-                congress_matched.at[idx, "match_type"] = result["match_type"]
-
-        # Update matched_via_hearing with results from congress_matched
+        # Write back into matched
         update_cols = ["bioguide_id", "last_name", "first_name", "party", "state", "match_score", "match_type"]
         for col in update_cols:
-            if col not in matched_via_hearing.columns:
-                matched_via_hearing[col] = None
-        matched_via_hearing.loc[unmatched_mask, update_cols] = congress_matched[update_cols].values
+            if col not in matched.columns:
+                matched[col] = None
+        matched.loc[unmatched_mask, update_cols] = congress_matched[update_cols].values
+
+    # --- Step C: fuzzy matching ---
+    unmatched_mask_c = matched["bioguide_id"].isna()
+    still_unmatched = matched[unmatched_mask_c]
+    fuzzy_pairs = still_unmatched[["speaker_last_name", "speaker_last_word", "congress"]].drop_duplicates()
+    logger.info("Fuzzy matching %d unique (name, congress) pairs...", len(fuzzy_pairs))
+
+    fuzzy_results = {}
+    for _, fp in tqdm(fuzzy_pairs.iterrows(), total=len(fuzzy_pairs), desc="Fuzzy matching"):
+        result = match_speaker_to_member(
+            fp["speaker_last_name"],
+            member_lookup,
+            fp["congress"],
+            speaker_last_word=fp["speaker_last_word"],
+        )
+        fuzzy_results[(fp["speaker_last_name"], fp["congress"])] = result
+
+    for idx, row in still_unmatched.iterrows():
+        key = (row["speaker_last_name"], row["congress"])
+        result = fuzzy_results.get(key)
+        if result:
+            for col, val in [
+                ("bioguide_id", result["bioguide_id"]),
+                ("last_name", result["matched_name"]),
+                ("first_name", result["first_name"]),
+                ("party", result["party"]),
+                ("state", result["state"]),
+                ("match_score", result["match_score"]),
+                ("match_type", result["match_type"]),
+            ]:
+                matched.at[idx, col] = val
+
+    # Note: "The Chairman" resolution would require committee chair role data
+    # that BICAM's hearing_members.csv doesn't provide. These ~160K sentences
+    # remain unmatched but are excluded by the post-match witness filter below
+    # since they have speaker_last_name == "CHAIRMAN".
 
     # Merge match results back into legislators_df
     legislators_df = legislators_df.merge(
-        matched_via_hearing[
+        matched[
             [
                 "hearing_id",
                 "speaker_last_name",
@@ -283,6 +364,23 @@ def step4_enrich_metadata(sentences_df, new_era):
         on=["hearing_id", "speaker_last_name"],
         how="left",
     )
+
+    # --- Post-match witness filtering ---
+    # Speakers who passed title-based witness filter but don't match ANY member
+    # are very likely witnesses (e.g. "Mr. Wray", "Mr. Dodaro").
+    # Only reclassify single-word names (multi-word names might just be matching failures).
+    pre_filter_count = len(legislators_df)
+    is_single_word = legislators_df["speaker_last_name"] == legislators_df["speaker_last_word"]
+    is_unmatched = legislators_df["bioguide_id"].isna()
+    is_not_chair = ~legislators_df["speaker_last_name"].isin({"CHAIRMAN", "CHAIRWOMAN", "CHAIRPERSON"})
+    witness_reclassified = is_single_word & is_unmatched & is_not_chair
+    n_reclassified = witness_reclassified.sum()
+    logger.info(
+        "Post-match witness reclassification: %d sentences (%.1f%% of legislators)",
+        n_reclassified,
+        n_reclassified / pre_filter_count * 100,
+    )
+    legislators_df = legislators_df[~witness_reclassified].copy()
 
     # Report match rate
     matched_count = legislators_df["bioguide_id"].notna().sum()
@@ -305,7 +403,7 @@ def step4_enrich_metadata(sentences_df, new_era):
     logger.info("Minority status (1=minority, 0=majority):\n%s", legislators_df["minority"].value_counts().to_string())
 
     # Drop helper columns
-    legislators_df = legislators_df.drop(columns=["is_witness"], errors="ignore")
+    legislators_df = legislators_df.drop(columns=["is_witness", "speaker_last_word"], errors="ignore")
 
     return legislators_df
 
