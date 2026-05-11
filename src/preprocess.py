@@ -76,12 +76,30 @@ def segment_speakers(transcript_text):
 
 
 TITLE_WORDS = {
-    "MR", "MR.", "MRS", "MRS.", "MS", "MS.", "DR", "DR.",
-    "CHAIRMAN", "CHAIRWOMAN", "CHAIRPERSON",
-    "SENATOR", "REPRESENTATIVE",
-    "GENERAL", "ADMIRAL", "SECRETARY", "JUDGE",
-    "AMBASSADOR", "GOVERNOR", "MAYOR", "PROFESSOR",
-    "REVEREND", "FATHER", "THE",
+    "MR",
+    "MR.",
+    "MRS",
+    "MRS.",
+    "MS",
+    "MS.",
+    "DR",
+    "DR.",
+    "CHAIRMAN",
+    "CHAIRWOMAN",
+    "CHAIRPERSON",
+    "SENATOR",
+    "REPRESENTATIVE",
+    "GENERAL",
+    "ADMIRAL",
+    "SECRETARY",
+    "JUDGE",
+    "AMBASSADOR",
+    "GOVERNOR",
+    "MAYOR",
+    "PROFESSOR",
+    "REVEREND",
+    "FATHER",
+    "THE",
 }
 
 
@@ -187,9 +205,7 @@ def _try_exact_match(name, congress_members):
     return None
 
 
-def match_speaker_to_member(
-    speaker_last_name, member_lookup_df, congress, score_threshold=85, speaker_last_word=None
-):
+def match_speaker_to_member(speaker_last_name, member_lookup_df, congress, score_threshold=85, speaker_last_word=None):
     """
     Match a speaker's last name to a known member of Congress.
 
