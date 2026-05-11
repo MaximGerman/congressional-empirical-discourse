@@ -34,6 +34,7 @@ from src.data import (
     load_hearings_texts_chunked,
     load_members,
     load_members_terms,
+    resolve_hearing_dates,
 )
 from src.preprocess import (
     download_nltk_deps,
@@ -42,6 +43,7 @@ from src.preprocess import (
     match_speaker_to_member,
     process_single_hearing,
 )
+from src.voteview import prepare_voteview_enrichment
 
 logger = logging.getLogger(__name__)
 
@@ -207,10 +209,10 @@ def _build_unique_matchable(lookup_df, group_cols):
     From a lookup DataFrame, keep only entries where the name is unambiguous
     within the group (e.g. one SMITH per hearing or per congress).
     """
-    counts = lookup_df.groupby(group_cols + ["last_name_upper"]).size().reset_index(name="_count")
-    unique = counts[counts["_count"] == 1][group_cols + ["last_name_upper"]]
-    deduped = lookup_df.drop_duplicates(subset=group_cols + ["last_name_upper"])
-    retVal = deduped.merge(unique, on=group_cols + ["last_name_upper"])
+    counts = lookup_df.groupby([*group_cols, "last_name_upper"]).size().reset_index(name="_count")
+    unique = counts[counts["_count"] == 1][[*group_cols, "last_name_upper"]]
+    deduped = lookup_df.drop_duplicates(subset=[*group_cols, "last_name_upper"])
+    retVal = deduped.merge(unique, on=[*group_cols, "last_name_upper"])
     return retVal
 
 
@@ -239,9 +241,9 @@ def step4_enrich_metadata(sentences_df, new_era):
         first_committee[["hearing_id", "committee_code", "committee_name"]], on="hearing_id", how="left"
     )
 
-    # Merge date info (take first date per hearing)
-    first_date = hearings_dates.drop_duplicates(subset="hearing_id", keep="first")
-    sentences_df = sentences_df.merge(first_date[["hearing_id", "hearing_date"]], on="hearing_id", how="left")
+    # Merge date info (resolve correct date per hearing using congress date ranges)
+    resolved_dates = resolve_hearing_dates(hearings_dates, new_era)
+    sentences_df = sentences_df.merge(resolved_dates[["hearing_id", "hearing_date"]], on="hearing_id", how="left")
 
     # Recompute name columns from speaker string (handles cached data from old pipeline)
     name_parts = sentences_df["speaker"].apply(extract_name_parts)
@@ -296,9 +298,7 @@ def step4_enrich_metadata(sentences_df, new_era):
 
     # --- Step B: congress_exact (congress + name) ---
     unmatched_mask = matched["bioguide_id"].isna()
-    unmatched_b = matched[unmatched_mask][
-        ["hearing_id", "speaker_last_name", "speaker_last_word", "congress"]
-    ].copy()
+    unmatched_b = matched[unmatched_mask][["hearing_id", "speaker_last_name", "speaker_last_word", "congress"]].copy()
 
     if not unmatched_b.empty:
         ml_matchable = _build_unique_matchable(member_lookup, ["congress"])
@@ -404,6 +404,39 @@ def step4_enrich_metadata(sentences_df, new_era):
 
     # Drop helper columns
     legislators_df = legislators_df.drop(columns=["is_witness", "speaker_last_word"], errors="ignore")
+
+    # --- Voteview enrichment: DW-NOMINATE, seniority, gender ---
+    target_congresses = sorted(legislators_df["congress"].dropna().unique().astype(int).tolist())
+    voteview_df = prepare_voteview_enrichment(target_congresses=target_congresses)
+    pre_voteview = len(legislators_df)
+    legislators_df = legislators_df.merge(voteview_df, on=["bioguide_id", "congress"], how="left")
+
+    # Report coverage (only for rows that have a bioguide_id — unmatched speakers can't be enriched)
+    matched_mask = legislators_df["bioguide_id"].notna()
+    n_matched = matched_mask.sum()
+    n_with_nominate = (matched_mask & legislators_df["nominate_dim1"].notna()).sum()
+    logger.info(
+        "Voteview enrichment: %d/%d matched legislators have NOMINATE scores (%.1f%%)",
+        n_with_nominate,
+        n_matched,
+        n_with_nominate / n_matched * 100 if n_matched > 0 else 0,
+    )
+    n_with_seniority = (matched_mask & legislators_df["seniority"].notna()).sum()
+    logger.info(
+        "Voteview enrichment: %d/%d matched legislators have seniority data (%.1f%%)",
+        n_with_seniority,
+        n_matched,
+        n_with_seniority / n_matched * 100 if n_matched > 0 else 0,
+    )
+    if "gender" in legislators_df.columns:
+        n_with_gender = (matched_mask & legislators_df["gender"].notna()).sum()
+        logger.info(
+            "Voteview enrichment: %d/%d matched legislators have gender data (%.1f%%)",
+            n_with_gender,
+            n_matched,
+            n_with_gender / n_matched * 100 if n_matched > 0 else 0,
+        )
+    assert len(legislators_df) == pre_voteview, "Voteview merge changed row count — check for duplicate keys"
 
     return legislators_df
 

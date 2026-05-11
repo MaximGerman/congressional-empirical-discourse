@@ -1,7 +1,10 @@
+import logging
 import os
 
 import bicam
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 # House majority party by congress (for minority/majority coding)
 HOUSE_MAJORITY = {
@@ -10,6 +13,15 @@ HOUSE_MAJORITY = {
     117: "Democratic",  # 2021-2023
     118: "Republican",  # 2023-2025
     119: "Republican",  # 2025-2027
+}
+
+# Congress session date ranges (start date inclusive, end date exclusive)
+CONGRESS_DATE_RANGES = {
+    115: ("2017-01-03", "2019-01-03"),
+    116: ("2019-01-03", "2021-01-03"),
+    117: ("2021-01-03", "2023-01-03"),
+    118: ("2023-01-03", "2025-01-03"),
+    119: ("2025-01-03", "2027-01-03"),
 }
 
 # The text column in hearings_texts.csv
@@ -64,6 +76,60 @@ def load_hearings_dates():
     return bicam.load_dataframe("hearings", "hearings_dates.csv", download=True, confirm=True)
 
 
+def resolve_hearing_dates(hearings_dates, hearings_df):
+    """
+    Resolve the correct hearing date for each hearing by filtering to dates
+    within the hearing's congress date range.
+
+    BICAM's hearings_dates.csv contains multiple dates per hearing (historical
+    proceedings, reissues, etc.). This function picks the date that falls within
+    the congress's session period.
+
+    Args:
+        hearings_dates: DataFrame with columns [hearing_id, hearing_date]
+        hearings_df: DataFrame with columns [hearing_id, congress]
+
+    Returns:
+        DataFrame with one row per hearing_id: [hearing_id, hearing_date]
+    """
+    df = hearings_dates.copy()
+    df["hearing_date"] = pd.to_datetime(df["hearing_date"], errors="coerce")
+
+    # Add congress info from hearings
+    df = df.merge(hearings_df[["hearing_id", "congress"]].drop_duplicates(), on="hearing_id", how="left")
+
+    # Build boolean mask: date falls within its congress range
+    in_range = pd.Series(False, index=df.index)
+    for congress, (start, end) in CONGRESS_DATE_RANGES.items():
+        mask = (df["congress"] == congress) & (df["hearing_date"] >= start) & (df["hearing_date"] < end)
+        in_range = in_range | mask
+
+    # For each hearing, prefer in-range dates; fall back to latest date if none in range
+    valid = df[in_range].sort_values("hearing_date").drop_duplicates(subset="hearing_id", keep="first")
+
+    total_hearings = df["hearing_id"].nunique()
+    n_in_range = len(valid)
+
+    # Hearings with no in-range date: take the latest date as best guess
+    missing_ids = set(df["hearing_id"]) - set(valid["hearing_id"])
+    if missing_ids:
+        fallback = (
+            df[df["hearing_id"].isin(missing_ids)]
+            .sort_values("hearing_date")
+            .drop_duplicates(subset="hearing_id", keep="last")
+        )
+        valid = pd.concat([valid, fallback], ignore_index=True)
+
+    logger.info(
+        "Resolved hearing dates: %d/%d in-range, %d fallback (latest date used)",
+        n_in_range,
+        total_hearings,
+        len(missing_ids),
+    )
+
+    return valid[["hearing_id", "hearing_date"]]
+
+
 def load_members():
     """Loads the members dataframe with name and party info."""
     return bicam.load_dataframe("members", "members.csv", download=True, confirm=True)
@@ -116,9 +182,7 @@ def build_member_lookup_from_hearing_members(hearings_members_df, members_df, he
         bioguide_id, last_name, first_name, party, state, congress, last_name_upper
     """
     # Join hearing_members with hearings to get congress numbers
-    hm_with_congress = hearings_members_df.merge(
-        hearings_df[["hearing_id", "congress"]], on="hearing_id", how="left"
-    )
+    hm_with_congress = hearings_members_df.merge(hearings_df[["hearing_id", "congress"]], on="hearing_id", how="left")
     # Deduplicate: one entry per (bioguide_id, congress)
     hm_unique = hm_with_congress[["bioguide_id", "congress"]].drop_duplicates()
 
