@@ -73,6 +73,8 @@ Steps 2-3 are cached: if `data/sentences_raw.csv` exists, the pipeline skips str
 | `congress` | Congress number (115-118) |
 | `party` | Republican / Democratic / Independent |
 | `minority` | 1 = minority party, 0 = majority party |
+| `unified_government` | 1 = unified government, 0 = divided government |
+| `minuni` | Interaction term (minority × unified_government) |
 | `committee_name` | Committee that held the hearing |
 | `hearing_date` | Date of the hearing |
 | `bioguide_id` | Member's Biographical Directory ID |

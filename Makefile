@@ -1,4 +1,4 @@
-.PHONY: lint format check pipeline notebook setup
+.PHONY: lint format check typecheck test pipeline notebook setup clean-data
 
 # Lint and format
 lint:
@@ -21,6 +21,9 @@ test:
 # Pipeline
 pipeline:
 	python -m src.pipeline
+
+clean-data:
+	rm -f data/*.csv
 
 # Notebook
 notebook:
