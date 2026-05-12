@@ -97,7 +97,7 @@ Voteview (voteview.com) publishes `HSall_members.csv` — a single CSV with ever
 
 ## Task 3: Unified government flag
 
-**Status:** NOT STARTED
+**Status:** DONE
 **Effort:** Small
 **Dependencies:** None (can run in parallel with Tasks 1-2)
 **Files:** `src/pipeline.py` or `src/data.py`
@@ -116,10 +116,10 @@ Unified government = same party controls House, Senate, and Presidency. This is 
 *Senate 117th: 50-50 split, VP Harris breaks tie → Democratic control.
 
 ### Steps
-- [ ] Add a constant dict in `src/data.py` mapping congress → unified (0/1)
-- [ ] Derive `minuni` interaction term: `minority * unified`
-- [ ] Join onto enriched data on `congress`
-- [ ] Add test
+- [x] Add a constant dict in `src/data.py` mapping congress → unified (0/1)
+- [x] Derive `minuni` interaction term: `minority * unified`
+- [x] Join onto enriched data on `congress`
+- [x] Add test
 
 ### Output columns added
 - `unified` (int, 0/1)

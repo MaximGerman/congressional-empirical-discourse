@@ -15,6 +15,15 @@ HOUSE_MAJORITY = {
     119: "Republican",  # 2025-2027
 }
 
+# Unified government by congress (1 = unified, 0 = divided)
+UNIFIED_GOVERNMENT = {
+    115: 1,  # R House, R Senate, R Pres (Trump)
+    116: 0,  # D House, R Senate, R Pres (Trump)
+    117: 1,  # D House, D Senate, D Pres (Biden)
+    118: 0,  # R House, D Senate, D Pres (Biden)
+    119: 1,  # R House, R Senate, R Pres (Trump)
+}
+
 # Congress session date ranges (start date inclusive, end date exclusive)
 CONGRESS_DATE_RANGES = {
     115: ("2017-01-03", "2019-01-03"),

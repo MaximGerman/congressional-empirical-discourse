@@ -22,6 +22,7 @@ from tqdm import tqdm
 from src.data import (
     HOUSE_MAJORITY,
     TEXT_COLUMN,
+    UNIFIED_GOVERNMENT,
     build_hearing_member_map,
     build_member_lookup,
     build_member_lookup_from_hearing_members,
@@ -399,8 +400,12 @@ def step4_enrich_metadata(sentences_df, new_era):
         lambda r: majority_map.get((r["party"], r["congress"])) if pd.notna(r["party"]) else None, axis=1
     )
 
+    legislators_df["unified"] = legislators_df["congress"].map(UNIFIED_GOVERNMENT)
+    legislators_df["minuni"] = legislators_df["minority"] * legislators_df["unified"]
+
     logger.info("Party breakdown:\n%s", legislators_df["party"].value_counts().to_string())
     logger.info("Minority status (1=minority, 0=majority):\n%s", legislators_df["minority"].value_counts().to_string())
+    logger.info("Unified government status:\n%s", legislators_df["unified"].value_counts().to_string())
 
     # Drop helper columns
     legislators_df = legislators_df.drop(columns=["is_witness", "speaker_last_word"], errors="ignore")

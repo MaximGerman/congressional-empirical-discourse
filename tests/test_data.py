@@ -1,6 +1,7 @@
 import pandas as pd
 
 from src.data import (
+    UNIFIED_GOVERNMENT,
     build_hearing_member_map,
     build_member_lookup,
     build_member_lookup_from_hearing_members,
@@ -146,6 +147,14 @@ def test_get_majority_status_democrat_alias():
     # 116th was Democratic majority
     assert get_majority_status("Democrat", 116) == 0
     assert get_majority_status("Democratic", 116) == 0
+
+
+def test_unified_government_dict():
+    # Verify expected mappings in the UNIFIED_GOVERNMENT dict
+    assert UNIFIED_GOVERNMENT[115] == 1
+    assert UNIFIED_GOVERNMENT[116] == 0
+    assert UNIFIED_GOVERNMENT[117] == 1
+    assert UNIFIED_GOVERNMENT[118] == 0
 
 
 # --- resolve_hearing_dates tests ---
