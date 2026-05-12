@@ -94,11 +94,12 @@ def compute_seniority(voteview_df, target_congresses=None):
     # Cumulative count of House terms per member (1-indexed)
     house_terms["seniority"] = house_terms.groupby("bioguide_id").cumcount() + 1
     house_terms["freshman"] = (house_terms["seniority"] == 1).astype(int)
+    house_terms["seniority_sq"] = house_terms["seniority"] ** 2
 
     if target_congresses is not None:
         house_terms = house_terms[house_terms["congress"].isin(target_congresses)]
 
-    return house_terms[["bioguide_id", "congress", "seniority", "freshman"]]
+    return house_terms[["bioguide_id", "congress", "seniority", "seniority_sq", "freshman"]]
 
 
 def prepare_voteview_enrichment(path=None, target_congresses=None):
@@ -114,7 +115,7 @@ def prepare_voteview_enrichment(path=None, target_congresses=None):
 
     Returns:
         DataFrame with columns: bioguide_id, congress, nominate_dim1, nominate_dim2,
-                               abs_dwnom1, seniority, freshman, and optionally gender.
+                               abs_dwnom1, seniority, seniority_sq, freshman, and optionally gender/female.
     """
     if target_congresses is None:
         target_congresses = [115, 116, 117, 118]
@@ -142,6 +143,9 @@ def prepare_voteview_enrichment(path=None, target_congresses=None):
 
     # Derived: absolute DW-NOMINATE dimension 1 (ideological extremity)
     retVal["abs_dwnom1"] = retVal["nominate_dim1"].abs()
+    
+    if "gender" in retVal.columns:
+        retVal["female"] = (retVal["gender"] == "F").astype(int)
 
     # Merge seniority
     retVal = retVal.merge(seniority_df, on=["bioguide_id", "congress"], how="left")

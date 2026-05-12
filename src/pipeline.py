@@ -403,6 +403,10 @@ def step4_enrich_metadata(sentences_df, new_era):
     legislators_df["unified"] = legislators_df["congress"].map(UNIFIED_GOVERNMENT)
     legislators_df["minuni"] = legislators_df["minority"] * legislators_df["unified"]
 
+    legislators_df["dem"] = legislators_df["party"].apply(
+        lambda p: 1 if pd.notna(p) and str(p).strip() in ("Democratic", "Democrat") else (0 if pd.notna(p) else None)
+    )
+
     logger.info("Party breakdown:\n%s", legislators_df["party"].value_counts().to_string())
     logger.info("Minority status (1=minority, 0=majority):\n%s", legislators_df["minority"].value_counts().to_string())
     logger.info("Unified government status:\n%s", legislators_df["unified"].value_counts().to_string())

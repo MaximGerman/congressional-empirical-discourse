@@ -8,11 +8,11 @@
 
 **Reference columns from original dataset (`RA_merged_with_agreement.csv`):**
 - `minority_rater1` — ✅ already have
-- `seniority_rs_rater1`, `seniority_sq_rs_rater1` — ❌ missing
-- `abs_dwnom1_rs_rater1` — ❌ missing
-- `dem_rater1` — ✅ derivable from `party`
-- `freshman_rater1` — ❌ missing
-- `female_rater1` — ❌ missing
+- `seniority_rs_rater1`, `seniority_sq_rs_rater1` — ✅ `seniority` and `seniority_sq` done, rank-standardization (`_rs`) pending
+- `abs_dwnom1_rs_rater1` — ✅ `abs_dwnom1` done, rank-standardization (`_rs`) pending
+- `dem_rater1` — ✅ derived from `party`
+- `freshman_rater1` — ✅ done
+- `female_rater1` — ✅ done (derived from gender)
 - `chairspeech_rater1`, `rankmemspeech_rater1` — ❌ missing
 - `leader_rater1` — ❌ missing
 - `unified_rater1`, `minuni_rater1` — ❌ missing
@@ -73,7 +73,9 @@ Voteview (voteview.com) publishes `HSall_members.csv` — a single CSV with ever
 - [ ] Derive additional columns:
   - `abs_dwnom1` = absolute value of `nominate_dim1` (ideological extremity)
   - `seniority` = number of prior congresses served by that member (count rows with same `bioguide_id` and earlier congress)
+  - `seniority_sq` = `seniority` squared
   - `freshman` = 1 if this is the member's first congress, else 0
+  - `female` = 1 if gender is "F", else 0
   - `vote_pct` = from Voteview's vote share columns if available, otherwise skip
 - [ ] Join onto `sentences_enriched.csv` on `(bioguide_id, congress)`
 - [ ] Add tests in `tests/test_voteview.py`
@@ -83,7 +85,9 @@ Voteview (voteview.com) publishes `HSall_members.csv` — a single CSV with ever
 - `nominate_dim2` (float)
 - `abs_dwnom1` (float, derived)
 - `gender` (str: "M" or "F")
+- `female` (int, 0/1, derived from gender)
 - `seniority` (int, count of congresses served including current)
+- `seniority_sq` (int, seniority²)
 - `freshman` (int, 0/1)
 - `vote_pct` — deferred to Task 6
 

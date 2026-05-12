@@ -210,7 +210,7 @@ def test_compute_seniority_empty_dataframe():
     df = pd.DataFrame(columns=["bioguide_id", "congress", "chamber"])
     result = compute_seniority(df)
     assert len(result) == 0
-    assert list(result.columns) == ["bioguide_id", "congress", "seniority", "freshman"]
+    assert list(result.columns) == ["bioguide_id", "congress", "seniority", "seniority_sq", "freshman"]
 
 
 # --- prepare_voteview_enrichment ---
@@ -225,7 +225,9 @@ def test_prepare_voteview_enrichment_columns(voteview_csv):
         "nominate_dim2",
         "abs_dwnom1",
         "gender",
+        "female",
         "seniority",
+        "seniority_sq",
         "freshman",
     }
     assert expected_cols == set(result.columns)
@@ -262,6 +264,7 @@ def test_prepare_voteview_enrichment_seniority(voteview_csv):
 def test_prepare_voteview_enrichment_no_gender(voteview_csv_no_gender):
     result = prepare_voteview_enrichment(path=voteview_csv_no_gender, target_congresses=[115])
     assert "gender" not in result.columns
+    assert "female" not in result.columns
     # Other columns should still be present
     assert "nominate_dim1" in result.columns
     assert "seniority" in result.columns
@@ -270,10 +273,13 @@ def test_prepare_voteview_enrichment_no_gender(voteview_csv_no_gender):
 def test_prepare_voteview_enrichment_with_gender(voteview_csv):
     result = prepare_voteview_enrichment(path=voteview_csv, target_congresses=[115])
     assert "gender" in result.columns
+    assert "female" in result.columns
     smith = result[result["bioguide_id"] == "A000001"].iloc[0]
     assert smith["gender"] == "M"
+    assert smith["female"] == 0
     jones = result[result["bioguide_id"] == "B000002"].iloc[0]
     assert jones["gender"] == "F"
+    assert jones["female"] == 1
 
 
 def test_prepare_voteview_enrichment_excludes_senate(voteview_csv):
