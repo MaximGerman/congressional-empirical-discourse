@@ -143,7 +143,7 @@ def prepare_voteview_enrichment(path=None, target_congresses=None):
 
     # Derived: absolute DW-NOMINATE dimension 1 (ideological extremity)
     retVal["abs_dwnom1"] = retVal["nominate_dim1"].abs()
-    
+
     if "gender" in retVal.columns:
         retVal["female"] = (retVal["gender"] == "F").astype(int)
 

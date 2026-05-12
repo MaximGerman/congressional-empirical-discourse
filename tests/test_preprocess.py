@@ -192,9 +192,7 @@ def test_match_speaker_multi_word_exact(member_lookup):
 
 def test_match_speaker_last_word_fallback(member_lookup):
     # If full name doesn't match, try last word only
-    res = match_speaker_to_member(
-        "JACKSON LEE", member_lookup, congress=115, speaker_last_word="LEE"
-    )
+    res = match_speaker_to_member("JACKSON LEE", member_lookup, congress=115, speaker_last_word="LEE")
     assert res is not None
     assert res["bioguide_id"] == "D000004"
 
