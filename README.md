@@ -12,7 +12,10 @@ Data pipeline for processing U.S. congressional hearing transcripts from the [BI
 │   ├── __init__.py
 │   ├── data.py                # Data loading, filtering, member lookup
 │   ├── preprocess.py          # Speaker segmentation, sentence splitting, name matching
-│   └── pipeline.py            # End-to-end pipeline (Steps 1-5)
+│   ├── elections.py           # MIT Election Lab data enrichment
+│   ├── leadership.py          # Committee leadership (Chair/Ranking Member) enrichment
+│   ├── voteview.py            # Voteview (NOMINATE, seniority, gender) enrichment
+│   └── pipeline.py            # End-to-end pipeline orchestration (Steps 1-5)
 ├── notebooks/
 │   └── 01_explore_bicam.ipynb # Interactive data exploration notebook
 └── data/                      # Pipeline output (gitignored, ~5GB)
@@ -78,6 +81,25 @@ Steps 2-3 are cached: if `data/sentences_raw.csv` exists, the pipeline skips str
 | `committee_name` | Committee that held the hearing |
 | `hearing_date` | Date of the hearing |
 | `bioguide_id` | Member's Biographical Directory ID |
+| `chairspeech` | 1 if speaker is committee Chair, 0 otherwise |
+| `rankmemspeech` | 1 if speaker is Ranking Member, 0 otherwise |
+| `leader` | 1 if speaker is Chair or Ranking Member, 0 otherwise |
+| `nominate_dim1` | DW-NOMINATE first dimension (liberal-conservative) |
+| `seniority` | Number of terms served in Congress |
+| `female` | 1 if member is female, 0 if male |
+| `vote_pct` | Percentage of votes received in last election |
+| `vote_pct_sq` | Squared vote percentage (for non-linear effects) |
+
+## Development
+
+The project includes a `Makefile` for common development tasks:
+
+```bash
+make check         # Run all quality checks (lint, format, typecheck)
+make test          # Run tests with coverage report
+make format        # Automatically format code and fix lint issues
+make typecheck     # Run mypy static type analysis
+```
 
 ## Exploration Notebook
 
