@@ -26,6 +26,8 @@ def _make_voteview_df(include_gender=True):
             "nominate_dim2": 0.1,
             "party_code": 100,
             "bioname": "SMITH, John",
+            "state_abbrev": "NY",
+            "district_code": 1,
         },
         {
             "congress": 114,
@@ -35,6 +37,8 @@ def _make_voteview_df(include_gender=True):
             "nominate_dim2": 0.12,
             "party_code": 100,
             "bioname": "SMITH, John",
+            "state_abbrev": "NY",
+            "district_code": 1,
         },
         {
             "congress": 115,
@@ -44,6 +48,8 @@ def _make_voteview_df(include_gender=True):
             "nominate_dim2": 0.15,
             "party_code": 100,
             "bioname": "SMITH, John",
+            "state_abbrev": "NY",
+            "district_code": 1,
         },
         {
             "congress": 116,
@@ -53,6 +59,8 @@ def _make_voteview_df(include_gender=True):
             "nominate_dim2": 0.18,
             "party_code": 100,
             "bioname": "SMITH, John",
+            "state_abbrev": "NY",
+            "district_code": 1,
         },
         {
             "congress": 117,
@@ -62,6 +70,8 @@ def _make_voteview_df(include_gender=True):
             "nominate_dim2": 0.20,
             "party_code": 100,
             "bioname": "SMITH, John",
+            "state_abbrev": "NY",
+            "district_code": 1,
         },
         # Jones: two terms
         {
@@ -72,6 +82,8 @@ def _make_voteview_df(include_gender=True):
             "nominate_dim2": -0.2,
             "party_code": 200,
             "bioname": "JONES, Mary",
+            "state_abbrev": "CA",
+            "district_code": 12,
         },
         {
             "congress": 116,
@@ -81,6 +93,8 @@ def _make_voteview_df(include_gender=True):
             "nominate_dim2": -0.22,
             "party_code": 200,
             "bioname": "JONES, Mary",
+            "state_abbrev": "CA",
+            "district_code": 12,
         },
         # Lee: freshman in 117th
         {
@@ -91,6 +105,8 @@ def _make_voteview_df(include_gender=True):
             "nominate_dim2": 0.05,
             "party_code": 100,
             "bioname": "LEE, Pat",
+            "state_abbrev": "TX",
+            "district_code": 5,
         },
         # Brown: Senate member (should not appear in House seniority)
         {
@@ -101,6 +117,8 @@ def _make_voteview_df(include_gender=True):
             "nominate_dim2": 0.3,
             "party_code": 100,
             "bioname": "BROWN, Sam",
+            "state_abbrev": "VT",
+            "district_code": 0,
         },
     ]
 
@@ -223,6 +241,8 @@ def test_prepare_voteview_enrichment_columns(voteview_csv):
         "congress",
         "nominate_dim1",
         "nominate_dim2",
+        "state_abbrev",
+        "district_code",
         "abs_dwnom1",
         "gender",
         "female",
@@ -298,6 +318,8 @@ def test_prepare_voteview_enrichment_deduplicates(tmp_path):
             "nominate_dim2": 0.1,
             "party_code": 100,
             "bioname": "SMITH, John",
+            "state_abbrev": "NY",
+            "district_code": 1,
         },
         # Duplicate row (e.g., special election + regular term)
         {
@@ -308,6 +330,8 @@ def test_prepare_voteview_enrichment_deduplicates(tmp_path):
             "nominate_dim2": 0.1,
             "party_code": 100,
             "bioname": "SMITH, John",
+            "state_abbrev": "NY",
+            "district_code": 1,
         },
     ]
     df = pd.DataFrame(rows)
@@ -329,6 +353,8 @@ def test_prepare_voteview_enrichment_missing_nominate(tmp_path):
             "nominate_dim2": None,
             "party_code": 100,
             "bioname": "SMITH, John",
+            "state_abbrev": "NY",
+            "district_code": 1,
         },
     ]
     df = pd.DataFrame(rows)

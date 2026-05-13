@@ -10,3 +10,4 @@ pymarkdownlnt==0.9.29
 pip-audit==2.9.0
 nbstripout==0.8.1
 pre-commit==4.2.0
+types-requests==2.32.0.20241016

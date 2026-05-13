@@ -37,6 +37,7 @@ from src.data import (
     load_members_terms,
     resolve_hearing_dates,
 )
+from src.elections import load_elections_data
 from src.leadership import prepare_leadership_enrichment
 from src.preprocess import (
     download_nltk_deps,
@@ -452,6 +453,20 @@ def step4_enrich_metadata(sentences_df, new_era):
     pre_leadership = len(legislators_df)
     legislators_df = prepare_leadership_enrichment(legislators_df)
     assert len(legislators_df) == pre_leadership, "Leadership merge changed row count — check for duplicate keys"
+
+    # --- Election vote share enrichment ---
+    pre_elections = len(legislators_df)
+    elections_df = load_elections_data(target_congresses=target_congresses)
+    legislators_df = legislators_df.merge(elections_df, on=["state_abbrev", "district_code", "congress"], how="left")
+
+    n_with_vote = (matched_mask & legislators_df["vote_pct"].notna()).sum()
+    logger.info(
+        "Elections enrichment: %d/%d matched legislators have vote share data (%.1f%%)",
+        n_with_vote,
+        n_matched,
+        n_with_vote / n_matched * 100 if n_matched > 0 else 0,
+    )
+    assert len(legislators_df) == pre_elections, "Elections merge changed row count"
 
     return legislators_df
 

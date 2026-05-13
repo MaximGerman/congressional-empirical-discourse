@@ -182,7 +182,7 @@ These columns may not be essential for the core Phase 4 analyses (trend, minorit
 
 ## Task 6: Election vote share (vote_pct)
 
-**Status:** NOT STARTED
+**Status:** IMPLEMENTED - NEEDS ANOTHER VERIFICATION OF CORRECTNESS
 **Effort:** Small-Medium
 **Dependencies:** Task 2 (needs bioguide_id, congress, plus state/district from Voteview)
 **Files:** New `src/elections.py`, update `src/pipeline.py`
@@ -210,9 +210,26 @@ The original paper uses `votepct100_rater1` and `votepct_sq100_rater1` as contro
 
 ---
 
-## Execution Order
+## Task 7: Codebase Review and Structural Optimization
 
-```
+**Status:** NOT STARTED
+**Effort:** Small
+**Dependencies:** None
+**Files:** All `src/` files
+
+### Background
+As the project grows, some files may become too long or have suboptimal organization. We need to ensure the codebase remains maintainable and well-structured.
+
+### Steps
+- [ ] Review all files in `src/` to identify files that are becoming too long (>500-800 lines).
+- [ ] Evaluate the logical ordering of functions and classes within files.
+- [ ] Check for consistency in imports and module structure.
+- [ ] Identify opportunities for refactoring or splitting modules (e.g., `pipeline.py` or `data.py`).
+- [ ] Optimize the balance between modularity and simplicity.
+
+---
+
+## Execution Order
 Week 1 (parallel):
   Task 1 (hearing_date fix)     ████  [small, independent]
   Task 2 (Voteview enrichment)  ████████  [medium, independent]
@@ -220,6 +237,10 @@ Week 1 (parallel):
 
 Week 2:
   Task 4 (committee leadership) ████████████  [medium-large, needs bioguide_id]
+  Task 6 (election vote share)  ██████        [small-medium, implemented]
+
+Week 3:
+  Task 7 (codebase review)      ████          [small, architectural]
 
 When info available:
   Task 5 (salience/polarization) ████████  [blocked on methodology from Amit]

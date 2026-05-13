@@ -132,7 +132,7 @@ def prepare_voteview_enrichment(path=None, target_congresses=None):
     logger.info("Voteview members in target congresses (%s): %d", target_congresses, len(target_members))
 
     # Select columns
-    cols = ["bioguide_id", "congress", "nominate_dim1", "nominate_dim2"]
+    cols = ["bioguide_id", "congress", "nominate_dim1", "nominate_dim2", "state_abbrev", "district_code"]
     if "gender" in target_members.columns:
         cols.append("gender")
         logger.info("Gender column found in Voteview data")
