@@ -133,28 +133,19 @@ Unified government = same party controls House, Senate, and Presidency. This is 
 
 ## Task 4: Committee leadership (chair / ranking member)
 
-**Status:** NOT STARTED
-**Effort:** Medium-Large
+**Status:** COMPLETE
+**Effort:** Medium
 **Dependencies:** Task 2 (needs `bioguide_id` confirmed reliable)
-**Files:** New `src/leadership.py`, update `src/pipeline.py`
+**Files:** `src/leadership.py`, `src/pipeline.py`
 
 ### Background
-For each committee-congress pair, one member is Chair and one is Ranking Member. This data is available from:
-- congress.gov API (structured but rate-limited)
-- BICAM's `hearings_members.csv` (may have role info — check first)
-- unitedstates/congress-legislators GitHub repo (has committee membership YAML with leadership roles)
+Implemented as a static lookup table of House standing committee chairs and ranking members for the 115th-118th Congresses. Data sourced from congress.gov and cross-referenced with BICAM's member list.
 
-### Steps
-- [ ] First check if BICAM's `hearings_members.csv` already has a role/position column (cheapest option)
-- [ ] If not, download committee membership data from `unitedstates/congress-legislators` repo (`committees-current.yaml`, `committee-membership-current.yaml`)
-- [ ] Create `src/leadership.py` with `load_committee_leaders(congress_range)`:
-  - Returns DataFrame: `bioguide_id`, `congress`, `committee_code`, `role` (chair/ranking_member/member)
-- [ ] Derive columns:
-  - `chairspeech` = 1 if speaker is committee chair for that hearing's committee
-  - `rankmemspeech` = 1 if speaker is ranking member
-  - `leader` = 1 if chair or ranking member
-- [ ] Join onto enriched data on `(bioguide_id, congress, committee_code)`
-- [ ] Add tests
+### Deliverables
+- [x] New `src/leadership.py` module handling committee code normalization and lookup
+- [x] Integrate enrichment into `step4_enrich_metadata`
+- [x] Produce `chairspeech`, `rankmemspeech`, and `leader` columns (1/0)
+- [x] Unit tests in `test_leadership.py`
 
 ### Output columns added
 - `chairspeech` (int, 0/1)

@@ -37,6 +37,7 @@ from src.data import (
     load_members_terms,
     resolve_hearing_dates,
 )
+from src.leadership import prepare_leadership_enrichment
 from src.preprocess import (
     download_nltk_deps,
     extract_name_parts,
@@ -446,6 +447,11 @@ def step4_enrich_metadata(sentences_df, new_era):
             n_with_gender / n_matched * 100 if n_matched > 0 else 0,
         )
     assert len(legislators_df) == pre_voteview, "Voteview merge changed row count — check for duplicate keys"
+
+    # --- Committee leadership enrichment: chair/ranking member ---
+    pre_leadership = len(legislators_df)
+    legislators_df = prepare_leadership_enrichment(legislators_df)
+    assert len(legislators_df) == pre_leadership, "Leadership merge changed row count — check for duplicate keys"
 
     return legislators_df
 
