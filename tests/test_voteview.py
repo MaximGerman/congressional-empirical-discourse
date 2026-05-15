@@ -249,6 +249,9 @@ def test_prepare_voteview_enrichment_columns(voteview_csv):
         "seniority",
         "seniority_sq",
         "freshman",
+        "abs_dwnom1_rs",
+        "seniority_rs",
+        "seniority_sq_rs",
     }
     assert expected_cols == set(result.columns)
 

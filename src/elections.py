@@ -95,6 +95,7 @@ def load_elections_data(path=None, target_congresses=None):
     # Calculate vote percentage for each candidate
     # Handle cases where totalvotes might be 0 to avoid division by zero
     df["vote_pct"] = (df["candidatevotes"] / df["totalvotes"].replace(0, pd.NA)) * 100
+    pd.set_option("future.no_silent_downcasting", True)
     df["vote_pct"] = df["vote_pct"].fillna(100.0).infer_objects()  # Unopposed where totalvotes == 0
 
     # Ensure district is an integer (MIT data has district 0 for at-large)

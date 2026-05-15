@@ -2,25 +2,25 @@
 
 # Lint and format
 lint:
-	ruff check src/ notebooks/
+	.venv/bin/ruff check src/ notebooks/
 
 format:
-	ruff format src/ notebooks/
-	ruff check --fix src/ notebooks/
+	.venv/bin/ruff format src/ notebooks/
+	.venv/bin/ruff check --fix src/ notebooks/
 
 check: lint typecheck
-	ruff format --check src/ notebooks/
+	.venv/bin/ruff format --check src/ notebooks/
 
 # Tests & Typechecking
 typecheck:
-	mypy src/
+	.venv/bin/mypy src/
 
 test:
-	python -m pytest tests/ -v --cov=src --cov-report=term-missing
+	.venv/bin/python -m pytest tests/ -v --cov=src --cov-report=term-missing
 
 # Pipeline
 pipeline:
-	python -m src.pipeline
+	.venv/bin/python -m src.pipeline
 
 clean-data:
 	rm -f data/*.csv

@@ -8,15 +8,16 @@
 
 **Reference columns from original dataset (`RA_merged_with_agreement.csv`):**
 - `minority_rater1` — ✅ already have
-- `seniority_rs_rater1`, `seniority_sq_rs_rater1` — ✅ `seniority` and `seniority_sq` done, rank-standardization (`_rs`) pending
-- `abs_dwnom1_rs_rater1` — ✅ `abs_dwnom1` done, rank-standardization (`_rs`) pending
+
+- `seniority_rs_rater1`, `seniority_sq_rs_rater1` — ✅ done (`seniority_rs`, `seniority_sq_rs` implemented)
+- `abs_dwnom1_rs_rater1` — ✅ done (`abs_dwnom1_rs` implemented)
 - `dem_rater1` — ✅ derived from `party`
 - `freshman_rater1` — ✅ done
 - `female_rater1` — ✅ done (derived from gender)
-- `chairspeech_rater1`, `rankmemspeech_rater1` — ❌ missing
-- `leader_rater1` — ❌ missing
-- `unified_rater1`, `minuni_rater1` — ❌ missing
-- `votepct100_rater1`, `votepct_sq100_rater1` — ❌ missing
+- `chairspeech_rater1`, `rankmemspeech_rater1` — ✅ done
+- `leader_rater1` — ✅ done
+- `unified_rater1`, `minuni_rater1` — ✅ done
+- `votepct100_rater1`, `votepct_sq100_rater1` — ✅ done
 - `salience_rater1` — ❌ missing (methodology unclear)
 - `polar_rater1` — ❌ missing (methodology unclear)
 - `partyloyalty_rater1` — ❌ missing
@@ -182,7 +183,7 @@ These columns may not be essential for the core Phase 4 analyses (trend, minorit
 
 ## Task 6: Election vote share (vote_pct)
 
-**Status:** IMPLEMENTED - NEEDS ANOTHER VERIFICATION OF CORRECTNESS
+**Status:** COMPLETE
 **Effort:** Small-Medium
 **Dependencies:** Task 2 (needs bioguide_id, congress, plus state/district from Voteview)
 **Files:** New `src/elections.py`, update `src/pipeline.py`
@@ -212,7 +213,7 @@ The original paper uses `votepct100_rater1` and `votepct_sq100_rater1` as contro
 
 ## Task 7: Codebase Review and Structural Optimization
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Effort:** Small
 **Dependencies:** None
 **Files:** All `src/` files

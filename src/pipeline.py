@@ -219,14 +219,7 @@ def _build_unique_matchable(lookup_df, group_cols):
     return retVal
 
 
-def step4_enrich_metadata(sentences_df, new_era):
-    """Step 4: Enrich sentence records with political metadata."""
-    logger.info("STEP 4: Enriching with political metadata")
-
-    if sentences_df.empty:
-        logger.warning("No sentences to enrich.")
-        return sentences_df
-
+def _merge_hearing_metadata(sentences_df, new_era):
     # Load hearing-level metadata
     hearings_committees = load_hearings_committees()
     hearings_dates = load_hearings_dates()
@@ -253,15 +246,26 @@ def step4_enrich_metadata(sentences_df, new_era):
     sentences_df["speaker_last_name"] = name_parts.apply(lambda x: x[0])
     sentences_df["speaker_last_word"] = name_parts.apply(lambda x: x[1])
 
+    return sentences_df
+
+
+def _filter_witnesses(sentences_df):
     # Filter out likely witnesses (title-based heuristic)
     sentences_df["is_witness"] = sentences_df["speaker"].apply(is_likely_witness)
     n_witness = sentences_df["is_witness"].sum()
     n_total = len(sentences_df)
-    logger.info("Identified %d witness sentences (%.1f%%) -- filtering out", n_witness, n_witness / n_total * 100)
+    logger.info(
+        "Identified %d witness sentences (%.1f%%) -- filtering out",
+        n_witness,
+        n_witness / n_total * 100 if n_total > 0 else 0,
+    )
 
     legislators_df = sentences_df[~sentences_df["is_witness"]].copy()
     logger.info("Legislator sentences remaining: %d", len(legislators_df))
+    return legislators_df
 
+
+def _match_speakers_to_members(legislators_df, new_era):
     # Build member lookup from terms (primary) + hearing_members (fills gaps, esp. 118th)
     members_df = load_members()
     terms_df = load_members_terms()
@@ -345,11 +349,6 @@ def step4_enrich_metadata(sentences_df, new_era):
             ]:
                 matched.at[idx, col] = val
 
-    # Note: "The Chairman" resolution would require committee chair role data
-    # that BICAM's hearing_members.csv doesn't provide. These ~160K sentences
-    # remain unmatched but are excluded by the post-match witness filter below
-    # since they have speaker_last_name == "CHAIRMAN".
-
     # Merge match results back into legislators_df
     legislators_df = legislators_df.merge(
         matched[
@@ -369,9 +368,6 @@ def step4_enrich_metadata(sentences_df, new_era):
     )
 
     # --- Post-match witness filtering ---
-    # Speakers who passed title-based witness filter but don't match ANY member
-    # are very likely witnesses (e.g. "Mr. Wray", "Mr. Dodaro").
-    # Only reclassify single-word names (multi-word names might just be matching failures).
     pre_filter_count = len(legislators_df)
     is_single_word = legislators_df["speaker_last_name"] == legislators_df["speaker_last_word"]
     is_unmatched = legislators_df["bioguide_id"].isna()
@@ -381,16 +377,20 @@ def step4_enrich_metadata(sentences_df, new_era):
     logger.info(
         "Post-match witness reclassification: %d sentences (%.1f%% of legislators)",
         n_reclassified,
-        n_reclassified / pre_filter_count * 100,
+        n_reclassified / pre_filter_count * 100 if pre_filter_count > 0 else 0,
     )
     legislators_df = legislators_df[~witness_reclassified].copy()
 
     # Report match rate
     matched_count = legislators_df["bioguide_id"].notna().sum()
     total = len(legislators_df)
-    logger.info("Match rate: %d/%d (%.1f%%)", matched_count, total, matched_count / total * 100)
+    logger.info("Match rate: %d/%d (%.1f%%)", matched_count, total, matched_count / total * 100 if total > 0 else 0)
     logger.info("Match type breakdown:\n%s", legislators_df["match_type"].value_counts().to_string())
 
+    return legislators_df
+
+
+def _apply_enrichments(legislators_df):
     # Add majority/minority status (vectorized)
     majority_map = {
         (p, c): get_majority_status(p, c)
@@ -422,7 +422,6 @@ def step4_enrich_metadata(sentences_df, new_era):
     pre_voteview = len(legislators_df)
     legislators_df = legislators_df.merge(voteview_df, on=["bioguide_id", "congress"], how="left")
 
-    # Report coverage (only for rows that have a bioguide_id — unmatched speakers can't be enriched)
     matched_mask = legislators_df["bioguide_id"].notna()
     n_matched = matched_mask.sum()
     n_with_nominate = (matched_mask & legislators_df["nominate_dim1"].notna()).sum()
@@ -467,6 +466,22 @@ def step4_enrich_metadata(sentences_df, new_era):
         n_with_vote / n_matched * 100 if n_matched > 0 else 0,
     )
     assert len(legislators_df) == pre_elections, "Elections merge changed row count"
+
+    return legislators_df
+
+
+def step4_enrich_metadata(sentences_df, new_era):
+    """Step 4: Enrich sentence records with political metadata."""
+    logger.info("STEP 4: Enriching with political metadata")
+
+    if sentences_df.empty:
+        logger.warning("No sentences to enrich.")
+        return sentences_df
+
+    sentences_df = _merge_hearing_metadata(sentences_df, new_era)
+    legislators_df = _filter_witnesses(sentences_df)
+    legislators_df = _match_speakers_to_members(legislators_df, new_era)
+    legislators_df = _apply_enrichments(legislators_df)
 
     return legislators_df
 

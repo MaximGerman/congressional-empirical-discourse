@@ -158,7 +158,11 @@ def prepare_voteview_enrichment(path=None, target_congresses=None):
     if n_deduped > 0:
         logger.info("Deduplicated %d duplicate (bioguide_id, congress) rows", n_deduped)
 
-    # Log coverage per congress
+    # Rank-standardization (within congress)
+    retVal["abs_dwnom1_rs"] = retVal.groupby("congress")["abs_dwnom1"].rank(pct=True)
+    retVal["seniority_rs"] = retVal.groupby("congress")["seniority"].rank(pct=True)
+    retVal["seniority_sq_rs"] = retVal["seniority_rs"] ** 2
+
     for c in sorted(target_congresses):
         n = retVal[retVal["congress"] == c]["bioguide_id"].nunique()
         logger.info("  Congress %d: %d members with Voteview data", c, n)
