@@ -140,11 +140,24 @@ def get_global_overview():
         return None
 
     try:
-        # Get available columns from the Parquet file
-        available_cols = pq.read_table(PARQUET_PATH).column_names
+        # Get available columns from the Parquet file metadata
+        parquet_file = pq.ParquetFile(PARQUET_PATH)
+        available_cols = parquet_file.schema.names
+        total_rows = parquet_file.metadata.num_rows
 
-        # Desired metadata columns
-        desired_cols = [
+        if total_rows == 0:
+            return {
+                "total_rows": 0,
+                "available_cols": available_cols,
+                "null_counts": pd.Series(0, index=available_cols),
+                "dtypes": pd.Series(object, index=available_cols),
+                "avg_match_score": 0,
+                "memory_usage": 0,
+                "sample_df": pd.DataFrame(columns=available_cols),
+            }
+
+        # 1. Read metadata columns for ALL rows (efficient)
+        metadata_cols = [
             "congress",
             "chamber",
             "party",
@@ -152,39 +165,54 @@ def get_global_overview():
             "female",
             "seniority",
             "nominate_dim1",
+            "abs_dwnom1",
             "match_score",
             "match_type",
             "minority",
             "unified",
         ]
+        cols_to_read = [c for c in metadata_cols if c in available_cols]
+        df_meta = pd.read_parquet(PARQUET_PATH, columns=cols_to_read) if cols_to_read else pd.DataFrame()
 
-        # Intersection of what we want and what we have
-        cols_to_read = [c for c in desired_cols if c in available_cols]
+        # 2. Sample rows for the heavy 'text' analysis
+        sample_size = min(100000, total_rows)
 
-        # Read only what's available
-        df_sample = pd.read_parquet(PARQUET_PATH, columns=cols_to_read)
+        # 3. Read content columns for the sample
+        content_cols = ["text", "congress", "minority", "abs_dwnom1"]
+        content_cols_to_read = [c for c in content_cols if c in available_cols]
+
+        if content_cols_to_read:
+            # Load a large enough sample directly or the whole columns if manageable
+            # For 100k rows, reading whole columns and then sampling is usually fine
+            df_content = pd.read_parquet(PARQUET_PATH, columns=content_cols_to_read)
+            sample_df = df_content.sample(sample_size, random_state=42)
+        else:
+            sample_df = df_meta.sample(sample_size, random_state=42) if not df_meta.empty else pd.DataFrame()
 
         stats = {
-            "total_rows": len(df_sample),
+            "total_rows": total_rows,
             "available_cols": available_cols,
-            "null_counts": df_sample.isnull().sum(),
-            "dtypes": df_sample.dtypes,
-            "avg_match_score": df_sample["match_score"].mean() if "match_score" in df_sample.columns else 0,
-            "memory_usage": df_sample.memory_usage(deep=True).sum() / (1024 * 1024),  # MB
-            "sample_df": df_sample.sample(min(250000, len(df_sample))),  # Sub-sample for histograms
+            "null_counts": df_meta.isnull().sum() if not df_meta.empty else pd.Series(),
+            "dtypes": df_meta.dtypes if not df_meta.empty else pd.Series(),
+            "avg_match_score": df_meta["match_score"].mean() if "match_score" in df_meta.columns else 0,
+            "memory_usage": df_meta.memory_usage(deep=True).sum() / (1024 * 1024) if not df_meta.empty else 0,
+            "sample_df": sample_df,
         }
 
         # Optional categorical counts
-        if "party" in df_sample.columns:
-            stats["party_counts"] = df_sample["party"].value_counts()
-        if "chamber" in df_sample.columns:
-            stats["chamber_counts"] = df_sample["chamber"].value_counts()
-        if "congress" in df_sample.columns:
-            stats["congress_counts"] = df_sample["congress"].value_counts().sort_index()
+        if "party" in df_meta.columns:
+            stats["party_counts"] = df_meta["party"].value_counts()
+        if "chamber" in df_meta.columns:
+            stats["chamber_counts"] = df_meta["chamber"].value_counts()
+        if "congress" in df_meta.columns:
+            stats["congress_counts"] = df_meta["congress"].value_counts().sort_index()
 
         return stats
     except Exception as e:
         st.error(f"Error computing global stats: {e}")
+        import traceback
+
+        st.code(traceback.format_exc())
         return None
 
 

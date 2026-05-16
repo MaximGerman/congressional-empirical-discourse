@@ -20,10 +20,10 @@ test:
 
 # Dashboard & Data
 explorer:
-	.venv/bin/streamlit run scripts/explorer.py
+	export PYTHONPATH=$${PYTHONPATH}:. && .venv/bin/streamlit run scripts/explorer.py
 
 optimize:
-	.venv/bin/python scripts/optimize_data.py
+	export PYTHONPATH=$${PYTHONPATH}:. && .venv/bin/python scripts/optimize_data.py
 
 update-docs:
 	export PYTHONPATH=$PYTHONPATH:. && .venv/bin/python scripts/update_data_dict.py
