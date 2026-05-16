@@ -368,3 +368,29 @@ def test_prepare_voteview_enrichment_missing_nominate(tmp_path):
     assert len(result) == 1
     assert pd.isna(result.iloc[0]["nominate_dim1"])
     assert pd.isna(result.iloc[0]["abs_dwnom1"])
+
+
+def test_prepare_voteview_enrichment_rank_standardization(voteview_csv):
+    """Test that rank-standardization calculates correctly, including correct percentage ranks."""
+    result = prepare_voteview_enrichment(path=voteview_csv, target_congresses=[115])
+
+    # In 115th Congress:
+    # Smith: abs_dwnom1=0.35, seniority=3
+    # Jones: abs_dwnom1=0.50, seniority=1
+
+    smith_115 = result[(result["bioguide_id"] == "A000001") & (result["congress"] == 115)].iloc[0]
+    jones_115 = result[(result["bioguide_id"] == "B000002") & (result["congress"] == 115)].iloc[0]
+
+    # Seniority: Jones (1) < Smith (3)
+    # Ranks: Jones = 1, Smith = 2 (out of 2) => 0.5, 1.0
+    assert jones_115["seniority_rs"] == 0.5
+    assert smith_115["seniority_rs"] == 1.0
+
+    # abs_dwnom1: Smith (0.35) < Jones (0.50)
+    # Ranks: Smith = 1, Jones = 2 (out of 2) => 0.5, 1.0
+    assert smith_115["abs_dwnom1_rs"] == 0.5
+    assert jones_115["abs_dwnom1_rs"] == 1.0
+
+    # seniority_sq_rs is just the square of seniority_rs
+    assert jones_115["seniority_sq_rs"] == 0.25
+    assert smith_115["seniority_sq_rs"] == 1.0
