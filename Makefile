@@ -2,21 +2,21 @@
 
 # Lint and format
 lint:
-	.venv/bin/ruff check src/ notebooks/
+	.venv/bin/ruff check src/ scripts/ tests/ notebooks/
 
 format:
-	.venv/bin/ruff format src/ notebooks/
-	.venv/bin/ruff check --fix src/ notebooks/
+	.venv/bin/ruff format src/ scripts/ tests/ notebooks/
+	.venv/bin/ruff check --fix src/ scripts/ tests/ notebooks/
 
 check: lint typecheck
-	.venv/bin/ruff format --check src/ notebooks/
+	.venv/bin/ruff format --check src/ scripts/ tests/ notebooks/
 
 # Tests & Typechecking
 typecheck:
-	.venv/bin/mypy src/
+	.venv/bin/mypy src/ scripts/ tests/
 
 test:
-	export PYTHONPATH=$PYTHONPATH:. && .venv/bin/python -m pytest tests/ -v --cov=src --cov-report=term-missing
+	export PYTHONPATH=$PYTHONPATH:. && .venv/bin/python -m pytest tests/ -v --cov=src --cov=scripts --cov-report=term-missing
 
 # Dashboard & Data
 explorer:

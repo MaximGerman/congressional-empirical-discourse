@@ -62,7 +62,7 @@ def check_and_optimize():
         progress_bar = st.progress(0, text="Optimizing data for performance...")
 
         def update_progress(percent):
-            progress_bar.progress(percent, text=f"Optimizing data... {int(percent*100)}%")
+            progress_bar.progress(percent, text=f"Optimizing data... {int(percent * 100)}%")
 
         success = convert_csv_to_parquet(progress_callback=update_progress)
 
@@ -204,7 +204,7 @@ with st.sidebar:
         progress_bar = st.progress(0, text="Optimizing data for performance...")
 
         def update_progress(percent):
-            progress_bar.progress(percent, text=f"Optimizing data... {int(percent*100)}%")
+            progress_bar.progress(percent, text=f"Optimizing data... {int(percent * 100)}%")
 
         if convert_csv_to_parquet(progress_callback=update_progress):
             st.success("Optimization finished!")

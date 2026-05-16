@@ -11,17 +11,21 @@ Data pipeline for processing U.S. congressional hearing transcripts from the [BI
 ├── src/
 │   ├── __init__.py
 │   ├── data.py                # Data loading, filtering, member lookup
-│   ├── preprocess.py          # Speaker segmentation, sentence splitting, name matching
+│   ├── preprocess.py          # Speaker segmentation, sentence splitting
 │   ├── elections.py           # MIT Election Lab data enrichment
-│   ├── leadership.py          # Committee leadership (Chair/Ranking Member) enrichment
-│   ├── voteview.py            # Voteview (NOMINATE, seniority, gender) enrichment
-│   └── pipeline.py            # End-to-end pipeline orchestration (Steps 1-5)
-├── notebooks/
-│   └── 01_explore_bicam.ipynb # Interactive data exploration notebook
-└── data/                      # Pipeline output (gitignored, ~5GB)
-    ├── sentences_raw.csv      # All extracted sentences
-    ├── sentences_enriched.csv # Legislator sentences with metadata
-    └── sample_for_labeling.csv# 10K balanced sample for silver labeling
+│   ├── leadership.py          # Committee leadership enrichment
+│   ├── voteview.py            # NOMINATE, seniority, gender enrichment
+│   └── pipeline.py            # Pipeline orchestration
+├── scripts/
+│   ├── explorer.py            # Streamlit Data Explorer app
+│   ├── optimize_data.py       # Parquet conversion utility
+│   ├── update_data_dict.py    # Automated data dictionary generator
+│   └── components/            # Explorer UI modules (Tabs)
+├── tests/                     # Unit & integration tests
+├── notebooks/                 # Interactive analysis
+└── data/                      # Local data storage
+    ├── sentences_enriched.parquet # Optimized data for analysis
+    └── ...
 ```
 
 ## Setup
@@ -55,6 +59,34 @@ This runs 5 steps:
 5. **Create sample** — Stratified 10K sample for silver labeling
 
 Steps 2-3 are cached: if `data/sentences_raw.csv` exists, the pipeline skips straight to Step 4.
+
+## BICAM Dataset Explorer
+
+For interactive analysis and data quality diagnostics, we provide a Streamlit-based explorer:
+
+```bash
+make explorer
+```
+
+The explorer includes tabs for:
+- **Overview**: High-level dataset statistics and distributions.
+- **Search**: Keyword search across millions of sentences with metadata filtering.
+- **Diagnostics**: Matching rate analysis and covariate coverage checks.
+- **Insights**: Advanced visualizations and correlation analysis.
+
+## Parquet Optimization
+
+To handle the ~2.4GB enriched dataset efficiently, we use the Apache Parquet format. Parquet provides columnar storage and compression, reducing load times from minutes (CSV) to seconds.
+
+If you have the CSV version but need the optimized Parquet file:
+
+```bash
+make optimize
+```
+
+## Automated Data Dictionary
+
+The project maintains an automated [Data Dictionary](docs/project/data_dictionary.md) that synchronizes with the source code. It is updated automatically via pre-commit hooks, ensuring that documentation always reflects the latest column definitions and enrichment logic.
 
 ### Expected Output
 
@@ -99,6 +131,9 @@ make check         # Run all quality checks (lint, format, typecheck)
 make test          # Run tests with coverage report
 make format        # Automatically format code and fix lint issues
 make typecheck     # Run mypy static type analysis
+make explorer      # Launch the Streamlit data explorer
+make optimize      # Convert CSV data to optimized Parquet
+make update-docs   # Synchronize the data dictionary with source code
 ```
 
 ## Exploration Notebook

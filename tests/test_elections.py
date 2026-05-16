@@ -67,7 +67,7 @@ def test_fetch_mit_election_data_success(mock_makedirs, mock_get, tmp_path):
     assert result_path == str(dest_path)
     assert os.path.exists(result_path)
     mock_get.assert_called_once()
-    args, kwargs = mock_get.call_args
+    _args, kwargs = mock_get.call_args
     assert "X-Dataverse-key" in kwargs["headers"]
     assert kwargs["headers"]["X-Dataverse-key"] == "dummy_token"
 
