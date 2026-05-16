@@ -205,9 +205,9 @@ def run_pipeline():
     legislators_df = step4_enrich_metadata(sentences_df, new_era)
 
     # Save enriched data
-    enriched_path = os.path.join(OUTPUT_DIR, "sentences_enriched.csv")
-    legislators_df.to_csv(enriched_path, index=False)
-    logger.info("Enriched legislator sentences saved to: %s", enriched_path)
+    enriched_path = os.path.join(OUTPUT_DIR, "sentences_enriched.parquet")
+    legislators_df.to_parquet(enriched_path, index=False)
+    logger.info("Enriched legislator sentences saved to Parquet: %s", enriched_path)
 
     # Step 5: Create sample
     sample = step5_create_sample(legislators_df)
