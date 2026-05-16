@@ -74,7 +74,7 @@ def convert_csv_to_parquet(progress_callback=None):
 
     print("\nOptimization Complete!")
     print(f"  CSV Size:     {csv_size:.1f} MB")
-    print(f"  Parquet Size: {pq_size:.1f} MB ({(pq_size/csv_size*100):.1f}% of original)")
+    print(f"  Parquet Size: {pq_size:.1f} MB ({(pq_size / csv_size * 100):.1f}% of original)")
     print(f"  Saved to:     {PARQUET_PATH}")
     return True
 
