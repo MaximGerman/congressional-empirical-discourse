@@ -72,10 +72,10 @@ def test_congress_ranges():
     for congress, (start, end) in congress_ranges.items():
         subset = df[df["congress"] == congress]
         if not subset.empty:
-            assert (
-                subset["hearing_date"] >= pd.to_datetime(start)
-            ).all(), f"Congress {congress} has dates before {start}"
+            assert (subset["hearing_date"] >= pd.to_datetime(start)).all(), (
+                f"Congress {congress} has dates before {start}"
+            )
             # Allow some overlap for end dates as sessions can run slightly over or BICAM might have late filings
-            assert (
-                subset["hearing_date"] <= pd.to_datetime(end) + pd.Timedelta(days=90)
-            ).all(), f"Congress {congress} has dates after {end}"
+            assert (subset["hearing_date"] <= pd.to_datetime(end) + pd.Timedelta(days=90)).all(), (
+                f"Congress {congress} has dates after {end}"
+            )
