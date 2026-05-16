@@ -14,3 +14,11 @@ repos:
     hooks:
       - id: mypy
         additional_dependencies: [types-requests, pandas-stubs, types-tqdm]
+  - repo: local
+    hooks:
+      - id: update-data-dict
+        name: Update Data Dictionary
+        entry: bash -c "export PYTHONPATH=$PYTHONPATH:. && .venv/bin/python scripts/update_data_dict.py"
+        language: system
+        pass_filenames: false
+        always_run: true

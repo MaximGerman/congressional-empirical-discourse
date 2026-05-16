@@ -1,10 +1,14 @@
 import os
 
 import pandas as pd
-import plotly.express as px
 import pyarrow.parquet as pq
 import streamlit as st
-from optimize_data import CSV_PATH, PARQUET_PATH, convert_csv_to_parquet
+
+from scripts.components.diagnostics_tab import render_diagnostics_tab
+from scripts.components.insights_tab import render_insights_tab
+from scripts.components.overview_tab import render_overview_tab
+from scripts.components.search_tab import render_search_tab
+from scripts.optimize_data import CSV_PATH, PARQUET_PATH, convert_csv_to_parquet
 
 # Page configuration
 st.set_page_config(
@@ -34,9 +38,6 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
-# Paths are imported from optimize_data for consistency
-# DATA_PATH = PARQUET_PATH
 
 
 def check_and_optimize():
@@ -234,8 +235,6 @@ with st.sidebar:
 global_stats = get_global_overview()
 
 # Load the data with filters
-
-# Load the data with filters
 with st.spinner("Loading dataset..."):
     df = load_data(nrows=row_limit, sampling=sampling_mode, selected_congresses=selected_congress_load)
 
@@ -274,219 +273,16 @@ st.markdown(
 tabs = st.tabs(["📊 Overview", "🔍 Transcript Search", "🧪 Matching Diagnostics", "🧬 Data Science & Insights"])
 
 with tabs[0]:
-    # Metrics Row
-    m1, m2, m3, m4 = st.columns(4)
-    with m1:
-        st.metric("Unique Members", filtered_df["bioguide_id"].nunique() if "bioguide_id" in filtered_df.columns else 0)
-    with m2:
-        st.metric("Unique Hearings", filtered_df["hearing_id"].nunique())
-    with m3:
-        st.metric(
-            "Avg. Match Score",
-            f"{filtered_df['match_score'].mean():.1f}%" if "match_score" in filtered_df.columns else "N/A",
-        )
-    with m4:
-        st.metric(
-            "Female Representation",
-            f"{(filtered_df['female'].mean() * 100):.1f}%" if "female" in filtered_df.columns else "N/A",
-        )
-
-    st.markdown("---")
-
-    c1, c2 = st.columns(2)
-
-    with c1:
-        st.subheader("Party Distribution")
-        party_counts = filtered_df["party"].value_counts().reset_index()
-        party_counts.columns = ["Party", "Sentences"]
-        fig = px.pie(
-            party_counts,
-            values="Sentences",
-            names="Party",
-            color="Party",
-            color_discrete_map={"Democratic": "#2E5BFF", "Republican": "#FF4B4B"},
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-    with c2:
-        st.subheader("Ideology vs. Seniority")
-        if "nominate_dim1" in filtered_df.columns and "seniority" in filtered_df.columns:
-            # Sample for plot to keep it fast
-            plot_df = filtered_df.dropna(subset=["nominate_dim1", "seniority"]).sample(min(2000, len(filtered_df)))
-            fig = px.scatter(
-                plot_df,
-                x="nominate_dim1",
-                y="seniority",
-                color="party",
-                hover_data=["speaker"],
-                labels={"nominate_dim1": "DW-NOMINATE (Lib-Con)", "seniority": "Terms Served"},
-                color_discrete_map={"Democratic": "#2E5BFF", "Republican": "#FF4B4B"},
-            )
-            st.plotly_chart(fig, use_container_width=True)
+    render_overview_tab(filtered_df)
 
 with tabs[1]:
-    st.subheader("Search Transcripts")
-    search_query = st.text_input("Enter keywords (e.g., 'climate change', 'inflation')", "")
-
-    if search_query:
-        search_results = filtered_df[filtered_df["text"].str.contains(search_query, case=False, na=False)]
-        st.write(f"Found **{len(search_results):,}** sentences matching your query.")
-
-        st.dataframe(
-            search_results[["speaker", "party", "committee_name", "text", "hearing_date"]], use_container_width=True
-        )
-    else:
-        st.info("Enter a search term above to browse specific utterances.")
+    render_search_tab(filtered_df)
 
 with tabs[2]:
-    st.subheader("Matching Quality & Diagnostics")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("### Unmatched Speakers")
-        unmatched = filtered_df[filtered_df["bioguide_id"].isna()]
-        if not unmatched.empty:
-            unmatched_counts = unmatched["speaker"].value_counts().head(20).reset_index()
-            unmatched_counts.columns = ["Speaker Name", "Sentence Count"]
-            st.write("Top speakers unable to be matched to a Bioguide ID:")
-            st.table(unmatched_counts)
-        else:
-            st.success("All speakers in this view are matched!")
-
-    with col2:
-        st.markdown("### Match Type Distribution")
-        if "match_type" in filtered_df.columns:
-            match_counts = filtered_df["match_type"].value_counts().reset_index()
-            match_counts.columns = ["Strategy", "Count"]
-            fig = px.bar(match_counts, x="Strategy", y="Count", color="Strategy")
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.warning("Match type information not available in dataset.")
-
-    st.markdown("---")
-    st.markdown("### Low Confidence Matches (< 80%)")
-    if "match_score" in filtered_df.columns:
-        low_conf = filtered_df[(filtered_df["match_score"] < 80) & (filtered_df["match_score"] > 0)]
-        if not low_conf.empty:
-            st.dataframe(
-                low_conf[["speaker", "member_first_name", "speaker_last_name", "match_score", "match_type"]]
-                .drop_duplicates()
-                .head(50),
-                use_container_width=True,
-            )
-        else:
-            st.success("No low-confidence matches found in this sample.")
+    render_diagnostics_tab(filtered_df)
 
 with tabs[3]:
-    if global_stats is None:
-        st.warning("Global statistics are unavailable. Please ensure the optimized dataset is generated.")
-    else:
-        st.header("Global Dataset Insights")
-        st.markdown(
-            "This tab provides a statistical summary of the **entire** dataset (3.5M+ rows) using efficient metadata analysis and sampling."
-        )
-
-        # Section 1: Data Completeness
-        st.subheader("1. Data Completeness & Null Analysis")
-        null_df = (global_stats["null_counts"] / global_stats["total_rows"] * 100).reset_index()
-        null_df.columns = ["Column", "Missing %"]
-        null_df = null_df.sort_values("Missing %", ascending=False)
-
-        fig_null = px.bar(
-            null_df,
-            x="Missing %",
-            y="Column",
-            orientation="h",
-            title="Percentage of Missing Data by Column",
-            color="Missing %",
-            color_continuous_scale="Reds",
-        )
-        st.plotly_chart(fig_null, use_container_width=True)
-
-        # Section 2: Temporal & Demographic Trends
-        st.markdown("---")
-        col1, col2 = st.columns(2)
-
-        with col1:
-            st.subheader("2. Temporal Volume")
-            if "congress_counts" in global_stats:
-                cong_df = global_stats["congress_counts"].reset_index()
-                cong_df.columns = ["Congress", "Sentences"]
-                fig_temp = px.line(
-                    cong_df, x="Congress", y="Sentences", markers=True, title="Speech Volume Across Congresses"
-                )
-                st.plotly_chart(fig_temp, use_container_width=True)
-            else:
-                st.info("Congress data not available.")
-
-        with col2:
-            st.subheader("3. Chamber Split")
-            if "chamber_counts" in global_stats:
-                cham_df = global_stats["chamber_counts"].reset_index()
-                cham_df.columns = ["Chamber", "Count"]
-                fig_cham = px.pie(
-                    cham_df,
-                    values="Count",
-                    names="Chamber",
-                    hole=0.4,
-                    color_discrete_sequence=px.colors.qualitative.Pastel,
-                )
-                st.plotly_chart(fig_cham, use_container_width=True)
-            else:
-                st.info("Chamber data not available.")
-
-        # Section 3: Distribution Analysis (Sampled)
-        st.markdown("---")
-        st.subheader("4. Scientific Distributions (250k Sample)")
-        s_col1, s_col2 = st.columns(2)
-        sample_df = global_stats["sample_df"]
-
-        with s_col1:
-            # Ideology Distribution
-            if "nominate_dim1" in sample_df.columns:
-                fig_ideo = px.histogram(
-                    sample_df,
-                    x="nominate_dim1",
-                    color="party" if "party" in sample_df.columns else None,
-                    marginal="box",
-                    title="Ideology Distribution (DW-NOMINATE)",
-                    color_discrete_map={"Democratic": "#2E5BFF", "Republican": "#FF4B4B"},
-                    labels={"nominate_dim1": "Lib-Con Ideology"},
-                )
-                st.plotly_chart(fig_ideo, use_container_width=True)
-            else:
-                st.info("Ideology data (DW-NOMINATE) not available.")
-
-        with s_col2:
-            # Match Score Distribution
-            if "match_score" in sample_df.columns:
-                fig_match = px.histogram(
-                    sample_df,
-                    x="match_score",
-                    title="Speaker Match Confidence Distribution",
-                    color_discrete_sequence=["#00CC96"],
-                )
-                st.plotly_chart(fig_match, use_container_width=True)
-            else:
-                st.info("Match score data not available.")
-
-        # Section 4: Technical Metadata
-        st.markdown("---")
-        with st.expander("🛠️ Advanced Data Science Metadata"):
-            st.subheader("Column Specifications & Memory")
-            meta_df = pd.DataFrame(
-                {
-                    "Dtype": global_stats["dtypes"],
-                    "Null Count": global_stats["null_counts"],
-                    "Null %": (global_stats["null_counts"] / global_stats["total_rows"] * 100).round(2),
-                }
-            )
-            st.table(meta_df)
-
-            m_col1, m_col2 = st.columns(2)
-            m_col1.metric("Global Row Count", f"{global_stats['total_rows']:,}")
-            m_col2.metric("Metadata RAM Footprint", f"{global_stats['memory_usage']:.1f} MB")
+    render_insights_tab(global_stats)
 
 # Footer
 st.sidebar.markdown("---")

@@ -113,9 +113,9 @@ class TestLoadCommitteeLeaders:
                 }:
                     assert len(role_group) == 2
                 else:
-                    assert len(role_group) == 1, (
-                        f"Duplicate {role} for ({congress}, {thomas_id}): {role_group['bioguide_id'].tolist()}"
-                    )
+                    assert (
+                        len(role_group) == 1
+                    ), f"Duplicate {role} for ({congress}, {thomas_id}): {role_group['bioguide_id'].tolist()}"
 
     def test_expected_committee_count_per_congress(self):
         """Each congress should have at least 20 committees with leaders."""

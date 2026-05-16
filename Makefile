@@ -1,4 +1,4 @@
-.PHONY: lint format check typecheck test pipeline notebook setup clean-data
+.PHONY: lint format check typecheck test pipeline notebook setup clean-data explorer optimize update-docs
 
 # Lint and format
 lint:
@@ -16,7 +16,17 @@ typecheck:
 	.venv/bin/mypy src/
 
 test:
-	.venv/bin/python -m pytest tests/ -v --cov=src --cov-report=term-missing
+	export PYTHONPATH=$PYTHONPATH:. && .venv/bin/python -m pytest tests/ -v --cov=src --cov-report=term-missing
+
+# Dashboard & Data
+explorer:
+	.venv/bin/streamlit run scripts/explorer.py
+
+optimize:
+	.venv/bin/python scripts/optimize_data.py
+
+update-docs:
+	export PYTHONPATH=$PYTHONPATH:. && .venv/bin/python scripts/update_data_dict.py
 
 # Pipeline
 pipeline:
