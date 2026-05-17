@@ -1,6 +1,8 @@
 import plotly.express as px
 import streamlit as st
 
+from scripts.components.utils import apply_dark_theme
+
 
 def render_diagnostics_tab(filtered_df):
     st.subheader("Matching Quality & Diagnostics")
@@ -23,7 +25,16 @@ def render_diagnostics_tab(filtered_df):
         if "match_type" in filtered_df.columns:
             match_counts = filtered_df["match_type"].value_counts().reset_index()
             match_counts.columns = ["Strategy", "Count"]
-            fig = px.bar(match_counts, x="Strategy", y="Count", color="Strategy")
+
+            # Style the bar chart with the premium color scheme
+            fig = px.bar(
+                match_counts,
+                x="Strategy",
+                y="Count",
+                color="Strategy",
+                color_discrete_sequence=["#2b5cff", "#00cc96", "#ab63fa", "#ff6692"],
+            )
+            apply_dark_theme(fig, is_categorical=True)
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.warning("Match type information not available in dataset.")

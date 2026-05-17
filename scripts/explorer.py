@@ -35,6 +35,12 @@ st.markdown(
         background-color: #0c0f17;
     }
 
+    .gradient-text {
+        background: linear-gradient(135deg, #3b82f6, #8b5cf6, #ec4899);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+
     /* Glassmorphic custom card widgets */
     .glass-card {
         background: rgba(22, 28, 45, 0.45);
@@ -396,6 +402,12 @@ with st.sidebar:
         st.session_state.custom_keywords_input = keywords_input
         empirical_keywords = [kw.strip().lower() for kw in keywords_input.split(",") if kw.strip()]
 
+        whole_words_toggle = st.checkbox(
+            "Match Whole Words Only",
+            value=True,
+            help="If checked, matches keywords only on exact word boundaries to avoid false positives (e.g. 'fact' matching 'factory').",
+        )
+
 # Pre-compute global stats for the insights tab
 global_stats = get_global_overview()
 
@@ -428,8 +440,20 @@ filtered_df = df[df["party"].isin(selected_parties)]
 if selected_committees:
     filtered_df = filtered_df[filtered_df["committee_name"].isin(selected_committees)]
 
-# Header
-st.title("Congressional Discourse Dataset Explorer")
+# Header - Premium styled gradient title block
+st.markdown(
+    """
+    <div style="margin-bottom: 25px;">
+        <h1 class="gradient-text" style="font-size: 2.8rem; margin-bottom: 5px; font-weight: 800; letter-spacing: -0.5px;">
+            BICAM Dataset Explorer
+        </h1>
+        <p style="font-size: 1.05rem; color: rgba(255, 255, 255, 0.65); font-weight: 400; margin-top: 0;">
+            Temporal Robustness and Power/Knowledge Analysis of U.S. Congressional Discourse (1997-2025)
+        </p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 st.markdown(
     f"Currently viewing **{len(filtered_df):,}** sentences from a **{len(df):,}** row sample (Total dataset: **{total_rows:,}** rows)."
 )
@@ -447,7 +471,7 @@ with tabs[2]:
     render_diagnostics_tab(filtered_df)
 
 with tabs[3]:
-    render_insights_tab(global_stats, empirical_keywords=empirical_keywords)
+    render_insights_tab(global_stats, empirical_keywords=empirical_keywords, whole_words=whole_words_toggle)
 
 # Footer
 st.sidebar.markdown("---")
