@@ -1,31 +1,7 @@
 import plotly.express as px
 import streamlit as st
 
-
-def metric_card(title, value, subtext="", accent_color="#2b5cff"):
-    st.markdown(
-        f"""
-        <div style="
-            background: rgba(22, 28, 45, 0.45);
-            border: 1px solid rgba(255, 255, 255, 0.05);
-            border-left: 4px solid {accent_color};
-            border-radius: 12px;
-            padding: 22px 18px;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-            margin-bottom: 15px;
-            backdrop-filter: blur(8px);
-            -webkit-backdrop-filter: blur(8px);
-        ">
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                <div style="font-size: 0.82rem; font-weight: 600; color: rgba(255, 255, 255, 0.55); text-transform: uppercase; letter-spacing: 0.8px;">{title}</div>
-                <div style="width: 8px; height: 8px; border-radius: 50%; background-color: {accent_color}; box-shadow: 0 0 8px {accent_color};"></div>
-            </div>
-            <div style="font-size: 1.9rem; font-weight: 700; color: #ffffff; margin-top: 2px;">{value}</div>
-            <div style="font-size: 0.76rem; color: rgba(255, 255, 255, 0.38); margin-top: 3px; font-weight: 400;">{subtext}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+from scripts.components.utils import metric_card
 
 
 def render_overview_tab(filtered_df):

@@ -1,12 +1,14 @@
-import re
-
 import pandas as pd
 import plotly.express as px
 import streamlit as st
 
 from scripts.components.utils import (
     apply_dark_theme,
-    compute_proportion_stats,
+    classify_empirical_discourse,
+    render_glass_card,
+    render_proportion_chart,
+    render_speaker_leaderboard,
+    render_statistical_report,
     z_test_p_value,
 )
 
@@ -134,15 +136,7 @@ def render_insights_tab(global_stats, empirical_keywords=None, whole_words=True)
 
     # Apply Heuristic calculations for all subsequent analyses
     if "text" in sample_df.columns and "minority" in sample_df.columns:
-        if not empirical_keywords:
-            sample_df["is_empirical_proxy"] = False
-        else:
-            escaped_kws = [re.escape(kw) for kw in empirical_keywords]
-            if whole_words:
-                pattern = "|".join(rf"\b{kw}\b" for kw in escaped_kws)
-            else:
-                pattern = "|".join(escaped_kws)
-            sample_df["is_empirical_proxy"] = sample_df["text"].str.contains(pattern, case=False, na=False)
+        sample_df = classify_empirical_discourse(sample_df, keywords=empirical_keywords, whole_words=whole_words)
 
         # SPATIAL US CHOROPLETH MAP
         st.markdown("---")
@@ -194,7 +188,7 @@ def render_insights_tab(global_stats, empirical_keywords=None, whole_words=True)
         else:
             st.info("State abbreviation columns (state_abbrev) not present in dataset.")
 
-        # Section 4: The Minority Gap (Heuristic Proxy with 95% Confidence Intervals)
+        # Section 4: The 'Minority Gap' Trend
         st.markdown("---")
         st.subheader("5. The 'Minority Gap' Trend with 95% CIs")
         st.info(
@@ -203,27 +197,21 @@ def render_insights_tab(global_stats, empirical_keywords=None, whole_words=True)
             "You can customize these keywords in the sidebar!"
         )
 
-        # Group by congress and minority status with confidence intervals
-        gap_df = compute_proportion_stats(sample_df, ["congress", "minority"], "is_empirical_proxy")
-        gap_df["Status"] = gap_df["minority"].map({1: "Minority", 0: "Majority"})
-
-        fig_gap = px.line(
-            gap_df,
+        render_proportion_chart(
+            df=sample_df,
+            group_cols=["congress", "minority"],
             x="congress",
-            y="mean_pct",
+            chart_type="line",
             color="Status",
-            error_y="ci_95_pct",
-            markers=True,
+            mapping_col="minority",
+            mapping_dict={1: "Minority", 0: "Majority"},
+            new_col_name="Status",
             title="Empirical Discourse: Majority vs. Minority with 95% Confidence Intervals",
             color_discrete_map={"Minority": "#FFD700", "Majority": "#808080"},
             labels={"congress": "Congress", "mean_pct": "% Empirical Discourse"},
-        )
-        apply_dark_theme(fig_gap)
-        fig_gap.update_layout(
             hovermode="x unified",
-            yaxis_range=[0, gap_df["mean_pct"].max() * 1.3],
+            yaxis_range_mult=1.3,
         )
-        st.plotly_chart(fig_gap, use_container_width=True)
 
         # Overall Z-test for minority vs majority
         min_mask = sample_df["minority"] == 1
@@ -254,45 +242,33 @@ def render_insights_tab(global_stats, empirical_keywords=None, whole_words=True)
 
         diff_pct = (p_min - p_maj) * 100
 
-        # Display the stats card
-        st.markdown(
-            f"""
-            <div class="glass-card" style="margin-top: 15px; border-left: 4px solid #ab63fa;">
-                <h5 style="color: #ffffff; margin-top: 0; font-size: 1rem; font-weight: 600;">🔬 Statistical Robustness Report: Minority vs. Majority</h5>
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-bottom: 12px; margin-top: 10px;">
-                    <div>
-                        <div style="font-size: 0.75rem; color: rgba(255,255,255,0.5); text-transform: uppercase;">Minority (N={n_min:,})</div>
-                        <div style="font-size: 1.25rem; font-weight: 700; color: #FFD700;">{p_min * 100:.2f}%</div>
-                    </div>
-                    <div>
-                        <div style="font-size: 0.75rem; color: rgba(255,255,255,0.5); text-transform: uppercase;">Majority (N={n_maj:,})</div>
-                        <div style="font-size: 1.25rem; font-weight: 700; color: #808080;">{p_maj * 100:.2f}%</div>
-                    </div>
-                    <div>
-                        <div style="font-size: 0.75rem; color: rgba(255,255,255,0.5); text-transform: uppercase;">Difference (Gap)</div>
-                        <div style="font-size: 1.25rem; font-weight: 700; color: #00cc96;">{diff_pct:+.2f}%</div>
-                    </div>
-                    <div>
-                        <div style="font-size: 0.75rem; color: rgba(255,255,255,0.5); text-transform: uppercase;">Z-Statistic / P-Value</div>
-                        <div style="font-size: 1.05rem; font-weight: 700; color: #ffe082; margin-top: 2px;">Z = {z_stat:.2f}<br><span style="font-size: 0.85rem; color: #ab63fa;">{p_str}</span></div>
-                    </div>
-                </div>
-                <p style="font-size: 0.82rem; color: rgba(255,255,255,0.7); margin-bottom: 0; line-height: 1.4;">
-                    <strong>Interpretation:</strong> {significance_desc} The data shows that the Minority party uses <strong>{abs(diff_pct):.2f}%</strong> {"more" if diff_pct > 0 else "less"} empirical arguments than the Majority party.
-                </p>
-            </div>
-            """,
-            unsafe_allow_html=True,
+        # Display the stats card using centralized report helper
+        stats_dict = {
+            f"Minority (N={n_min:,})": f"{p_min * 100:.2f}%",
+            f"Majority (N={n_maj:,})": f"{p_maj * 100:.2f}%",
+            "Difference (Gap)": f"{diff_pct:+.2f}%",
+            "Z-Statistic / P-Value": f"Z = {z_stat:.2f}<br><span style='font-size: 0.85rem; color: #ab63fa;'>{p_str}</span>",
+        }
+        interpretation_str = (
+            f"<strong>Interpretation:</strong> {significance_desc} The data shows that the Minority party "
+            f"uses <strong>{abs(diff_pct):.2f}%</strong> {'more' if diff_pct > 0 else 'less'} empirical arguments than the Majority party."
         )
 
-        st.markdown(
-            """
-            > **Research Insight: The 'Power or Knowledge' Framework**
-            >
-            > The original Haim & Barak-Corren (2026) paper posits that empirical discourse is the 'weapon of the powerless.'
-            > When a party loses formal agenda control (Majority -> Minority), they increase their reliance on data-driven
-            > arguments to challenge dominant forces. This chart allows us to monitor if this gap persists into the 2017-2025 era.
-            """
+        render_statistical_report(
+            title="🔬 Statistical Robustness Report: Minority vs. Majority",
+            stats=stats_dict,
+            interpretation=interpretation_str,
+            border_color="#ab63fa",
+        )
+
+        render_glass_card(
+            title="Research Insight: The 'Power or Knowledge' Framework",
+            content=(
+                "The original Haim & Barak-Corren (2026) paper posits that empirical discourse is the 'weapon of the powerless.' "
+                "When a party loses formal agenda control (Majority -> Minority), they increase their reliance on data-driven "
+                "arguments to challenge dominant forces. This chart allows us to monitor if this gap persists into the 2017-2025 era."
+            ),
+            border_color="#808080",
         )
 
         # Section: Leadership status and custom role analysis (Power or Knowledge)
@@ -313,13 +289,12 @@ def render_insights_tab(global_stats, empirical_keywords=None, whole_words=True)
                     return "Regular Member"
 
             sample_df["legislative_role"] = sample_df.apply(determine_role, axis=1)
-            role_gap = compute_proportion_stats(sample_df, ["legislative_role"], "is_empirical_proxy")
 
-            fig_role = px.bar(
-                role_gap,
+            render_proportion_chart(
+                df=sample_df,
+                group_cols=["legislative_role"],
                 x="legislative_role",
-                y="mean_pct",
-                error_y="ci_95_pct",
+                chart_type="bar",
                 color="legislative_role",
                 title="Evidence Usage by Committee Leadership Role (with 95% CIs)",
                 color_discrete_map={
@@ -329,17 +304,15 @@ def render_insights_tab(global_stats, empirical_keywords=None, whole_words=True)
                 },
                 labels={"legislative_role": "Legislative Role", "mean_pct": "% Empirical Discourse"},
             )
-            apply_dark_theme(fig_role, is_categorical=True)
-            st.plotly_chart(fig_role, use_container_width=True)
 
-            st.markdown(
-                """
-                > **Research Insight: The Leadership Gap**
-                >
-                > Leaders holding formal agenda-setting power (Chairs) face less institutional pressure to defend their positions
-                > with data, using their institutional advantage instead. In contrast, Ranking Members must rely heavily on empirical assertions
-                > to challenge and question bills.
-                """
+            render_glass_card(
+                title="Research Insight: The Leadership Gap",
+                content=(
+                    "Leaders holding formal agenda-setting power (Chairs) face less institutional pressure to defend their positions "
+                    "with data, using their institutional advantage instead. In contrast, Ranking Members must rely heavily on empirical assertions "
+                    "to challenge and question bills."
+                ),
+                border_color="#FFD700",
             )
         else:
             st.info("Leadership details (chairspeech/rankmemspeech) are not available in sample.")
@@ -356,39 +329,32 @@ def render_insights_tab(global_stats, empirical_keywords=None, whole_words=True)
 
         with c_fresh1:
             if "freshman" in sample_df.columns:
-                fresh_gap = compute_proportion_stats(sample_df, ["freshman"], "is_empirical_proxy")
-                fresh_gap["Career Stage"] = fresh_gap["freshman"].map({1: "Freshman (1st Term)", 0: "Veteran Member"})
-
-                fig_fresh = px.bar(
-                    fresh_gap,
+                render_proportion_chart(
+                    df=sample_df,
+                    group_cols=["freshman"],
                     x="Career Stage",
-                    y="mean_pct",
-                    error_y="ci_95_pct",
+                    chart_type="bar",
                     color="Career Stage",
+                    mapping_col="freshman",
+                    mapping_dict={1: "Freshman (1st Term)", 0: "Veteran Member"},
+                    new_col_name="Career Stage",
                     title="Evidence Usage: Freshmen vs. Veteran Lawmakers (with 95% CIs)",
                     color_discrete_map={"Freshman (1st Term)": "#00cc96", "Veteran Member": "#ab63fa"},
                     labels={"mean_pct": "% Empirical Discourse"},
                 )
-                apply_dark_theme(fig_fresh, is_categorical=True)
-                st.plotly_chart(fig_fresh, use_container_width=True)
             else:
                 st.info("Freshman indicator not present in sample.")
 
         with c_fresh2:
             if "seniority" in sample_df.columns:
-                sen_gap = compute_proportion_stats(sample_df, ["seniority"], "is_empirical_proxy")
-
-                fig_sen = px.line(
-                    sen_gap,
+                render_proportion_chart(
+                    df=sample_df,
+                    group_cols=["seniority"],
                     x="seniority",
-                    y="mean_pct",
-                    error_y="ci_95_pct",
-                    markers=True,
+                    chart_type="line",
                     title="Evidence Usage Trend by Seniority (Terms Served, with 95% CIs)",
                     labels={"seniority": "Seniority (Terms Served)", "mean_pct": "% Empirical Discourse"},
                 )
-                apply_dark_theme(fig_sen)
-                st.plotly_chart(fig_sen, use_container_width=True)
             else:
                 st.info("Seniority tenure details not available in sample.")
 
@@ -403,53 +369,7 @@ def render_insights_tab(global_stats, empirical_keywords=None, whole_words=True)
             min_sentences = st.slider(
                 "Minimum Sentences Spoken in Sample", min_value=10, max_value=200, value=50, step=10
             )
-
-            # Aggregate speaker statistics
-            speaker_stats = (
-                sample_df.groupby(["speaker", "party"], observed=False)
-                .agg(empirical_pct=("is_empirical_proxy", "mean"), sentence_count=("text", "count"))
-                .reset_index()
-            )
-
-            speaker_stats["Empirical %"] = (speaker_stats["empirical_pct"] * 100).round(1)
-            speaker_filtered = speaker_stats[speaker_stats["sentence_count"] >= min_sentences]
-
-            if not speaker_filtered.empty:
-                col_lead1, col_lead2 = st.columns(2)
-
-                with col_lead1:
-                    st.markdown("##### Top 10 Most Empirical Speakers")
-                    top_sp = (
-                        speaker_filtered.sort_values("Empirical %", ascending=False).head(10).reset_index(drop=True)
-                    )
-                    top_sp.index += 1
-                    st.table(
-                        top_sp[["speaker", "party", "Empirical %", "sentence_count"]].rename(
-                            columns={
-                                "speaker": "Lawmaker",
-                                "party": "Party",
-                                "Empirical %": "Empirical %",
-                                "sentence_count": "Total Sentences",
-                            }
-                        )
-                    )
-
-                with col_lead2:
-                    st.markdown("##### Top 10 Least Empirical Speakers")
-                    bot_sp = speaker_filtered.sort_values("Empirical %", ascending=True).head(10).reset_index(drop=True)
-                    bot_sp.index += 1
-                    st.table(
-                        bot_sp[["speaker", "party", "Empirical %", "sentence_count"]].rename(
-                            columns={
-                                "speaker": "Lawmaker",
-                                "party": "Party",
-                                "Empirical %": "Empirical %",
-                                "sentence_count": "Total Sentences",
-                            }
-                        )
-                    )
-            else:
-                st.info("No speakers met the minimum sentence count threshold. Try lowering the slider.")
+            render_speaker_leaderboard(sample_df, "is_empirical_proxy", min_sentences)
         else:
             st.info("Speaker name details are not present in sample.")
 
@@ -457,26 +377,21 @@ def render_insights_tab(global_stats, empirical_keywords=None, whole_words=True)
         st.markdown("---")
         st.subheader("6. Ideological Extremity & Evidence")
         if "abs_dwnom1" in sample_df.columns:
-            # Create bins for ideological extremity with confidence intervals
-            sample_df["extremity_bin"] = pd.cut(sample_df["abs_dwnom1"], bins=5)
-            pol_df = compute_proportion_stats(sample_df, ["extremity_bin"], "is_empirical_proxy")
-            pol_df["Extremity"] = pol_df["extremity_bin"].astype(str)
+            sample_df["extremity_bin"] = pd.cut(sample_df["abs_dwnom1"], bins=5).astype(str)
 
-            fig_pol = px.bar(
-                pol_df,
-                x="Extremity",
-                y="mean_pct",
-                error_y="ci_95_pct",
-                title="Does Ideological Extremity Correlate with Data Usage? (95% CIs)",
+            render_proportion_chart(
+                df=sample_df,
+                group_cols=["extremity_bin"],
+                x="extremity_bin",
+                chart_type="bar",
                 color="mean_pct",
                 color_continuous_scale="Viridis",
+                title="Does Ideological Extremity Correlate with Data Usage? (95% CIs)",
                 labels={
-                    "Extremity": "Ideological Extremity (Absolute DW-NOMINATE)",
+                    "extremity_bin": "Ideological Extremity (Absolute DW-NOMINATE)",
                     "mean_pct": "% Empirical Discourse",
                 },
             )
-            apply_dark_theme(fig_pol, is_categorical=True)
-            st.plotly_chart(fig_pol, use_container_width=True)
         else:
             st.info("Ideological extremity data (abs_dwnom1) not available in sample.")
 
@@ -485,30 +400,29 @@ def render_insights_tab(global_stats, empirical_keywords=None, whole_words=True)
         st.subheader("7. Chamber Comparison: House vs. Senate")
         if "chamber" in sample_df.columns:
             sample_df["Chamber"] = sample_df["chamber"].str.capitalize()
-            chamber_gap = compute_proportion_stats(sample_df, ["Chamber", "minority"], "is_empirical_proxy")
-            chamber_gap["Status"] = chamber_gap["minority"].map({1: "Minority", 0: "Majority"})
 
-            fig_chamber = px.bar(
-                chamber_gap,
+            render_proportion_chart(
+                df=sample_df,
+                group_cols=["Chamber", "minority"],
                 x="Chamber",
-                y="mean_pct",
+                chart_type="bar",
                 color="Status",
-                error_y="ci_95_pct",
                 barmode="group",
+                mapping_col="minority",
+                mapping_dict={1: "Minority", 0: "Majority"},
+                new_col_name="Status",
                 title="Evidence Usage by Chamber and Party Power Status (with 95% CIs)",
                 color_discrete_map={"Minority": "#FFD700", "Majority": "#808080"},
                 labels={"Chamber": "Chamber", "mean_pct": "% Empirical Discourse"},
             )
-            apply_dark_theme(fig_chamber, is_categorical=True)
-            st.plotly_chart(fig_chamber, use_container_width=True)
 
-            st.markdown(
-                """
-                > **Research Insight: Chamber Dynamics**
-                >
-                > In the Senate, with longer term lengths and smaller body size (100 members), the majority-minority gap
-                > is expected to show distinct behavior compared to the fast-paced, highly structured House of Representatives (435 members).
-                """
+            render_glass_card(
+                title="Research Insight: Chamber Dynamics",
+                content=(
+                    "In the Senate, with longer term lengths and smaller body size (100 members), the majority-minority gap "
+                    "is expected to show distinct behavior compared to the fast-paced, highly structured House of Representatives (435 members)."
+                ),
+                border_color="#ffe082",
             )
         else:
             st.info("Chamber data not available in sample.")
@@ -546,9 +460,6 @@ def render_insights_tab(global_stats, empirical_keywords=None, whole_words=True)
             before_cong, after_cong = 117, 118
             label_before, label_after = "117th Congress", "118th Congress"
 
-        # Determine agenda control states historically
-        # House Majority: 115: Republican, 116: Democratic, 117: Democratic, 118: Republican
-        # Senate Majority: 115: Republican, 116: Republican, 117: Democratic, 118: Democratic
         if chamber_sel == "House":
             maj_by_cong = {115: "Republican", 116: "Democratic", 117: "Democratic", 118: "Republican"}
         else:
@@ -564,7 +475,6 @@ def render_insights_tab(global_stats, empirical_keywords=None, whole_words=True)
             f"{'🔄 **Power shift occurred!**' if has_power_shift else '➖ **No power shift occurred (majority party retained control).**'}"  # noqa: RUF001
         )
 
-        # Filter dataset to transition
         shift_df = sample_df[
             (sample_df["chamber"].str.lower() == chamber_sel.lower())
             & (sample_df["party"].isin(["Democratic", "Republican"]))
@@ -572,23 +482,26 @@ def render_insights_tab(global_stats, empirical_keywords=None, whole_words=True)
         ].copy()
 
         if not shift_df.empty:
-            # Group and calculate stats
-            shift_grouped = compute_proportion_stats(shift_df, ["congress", "party"], "is_empirical_proxy")
-            shift_grouped["Congress Label"] = shift_grouped["congress"].map(
+            # Map congress values to descriptive session labels
+            shift_df["Congress Label"] = shift_df["congress"].map(
                 {
                     before_cong: f"{before_cong}th ({maj_before} Maj)",
                     after_cong: f"{after_cong}th ({maj_after} Maj)",
                 }
             )
-            shift_grouped = shift_grouped.sort_values("congress")
 
-            fig_shift = px.line(
-                shift_grouped,
+            render_proportion_chart(
+                df=shift_df,
+                group_cols=["congress", "party"],
                 x="Congress Label",
-                y="mean_pct",
+                chart_type="line",
                 color="party",
-                error_y="ci_95_pct",
-                markers=True,
+                mapping_col="congress",
+                mapping_dict={
+                    before_cong: f"{before_cong}th ({maj_before} Maj)",
+                    after_cong: f"{after_cong}th ({maj_after} Maj)",
+                },
+                new_col_name="Congress Label",
                 title=f"Evidence Usage Shift: {chamber_sel} ({before_cong}th ➔ {after_cong}th Congress)",
                 color_discrete_map={"Democratic": "#2E5BFF", "Republican": "#FF4B4B"},
                 labels={
@@ -596,13 +509,10 @@ def render_insights_tab(global_stats, empirical_keywords=None, whole_words=True)
                     "mean_pct": "% Empirical Discourse",
                     "Congress Label": "Congressional Session",
                 },
+                yaxis_range_mult=1.3,
             )
-            apply_dark_theme(fig_shift)
-            fig_shift.update_layout(yaxis_range=[0, shift_grouped["mean_pct"].max() * 1.3])
-            st.plotly_chart(fig_shift, use_container_width=True)
 
             # Perform Z-tests for BOTH parties across the transition
-            # Democrats before vs after
             dem_before_mask = (shift_df["party"] == "Democratic") & (shift_df["congress"] == before_cong)
             dem_after_mask = (shift_df["party"] == "Democratic") & (shift_df["congress"] == after_cong)
             n_dem_b = int(dem_before_mask.sum())
@@ -612,7 +522,6 @@ def render_insights_tab(global_stats, empirical_keywords=None, whole_words=True)
             _dem_z, dem_p = z_test_p_value(p_dem_a, n_dem_a, p_dem_b, n_dem_b)
             dem_diff = (p_dem_a - p_dem_b) * 100
 
-            # Republicans before vs after
             gop_before_mask = (shift_df["party"] == "Republican") & (shift_df["congress"] == before_cong)
             gop_after_mask = (shift_df["party"] == "Republican") & (shift_df["congress"] == after_cong)
             n_gop_b = int(gop_before_mask.sum())
@@ -629,62 +538,56 @@ def render_insights_tab(global_stats, empirical_keywords=None, whole_words=True)
                 remained_minority = (before_maj != party_name) and (after_maj != party_name)
 
                 if retained_power or remained_minority:
-                    prediction = "No major changes predicted (retained power status)"
                     is_significant = p_val < 0.05
                     actual_dir = "increased" if diff > 0 else "decreased"
-                    status = f"➖ **Neutral**: {party_name} evidence usage {actual_dir} by {abs(diff):.2f}% ({'statistically significant' if is_significant else 'not statistically significant'}, p={p_val:.3f})."  # noqa: RUF001
-                    return prediction, status
+                    return f"➖ **Neutral**: {party_name} evidence usage {actual_dir} by {abs(diff):.2f}% ({'statistically significant' if is_significant else 'not statistically significant'}, p={p_val:.3f})."  # noqa: RUF001
 
                 if gained_power:
-                    prediction = "Evidence usage should **DECREASE** (gained majority/agenda control)"
                     if p_val < 0.05:
                         if diff < 0:
-                            status = f"🟢 **Supports Theory**: Evidence usage significantly decreased by **{abs(diff):.2f}%** (p={p_val:.4f}). Gaining power reduced strategic reliance on data."
+                            return f"🟢 **Supports Theory**: Evidence usage significantly decreased by **{abs(diff):.2f}%** (p={p_val:.4f}). Gaining power reduced strategic reliance on data."
                         else:
-                            status = f"🔴 **Contradicts Theory**: Evidence usage significantly *increased* by **{abs(diff):.2f}%** (p={p_val:.4f}) despite gaining agenda control."
+                            return f"🔴 **Contradicts Theory**: Evidence usage significantly *increased* by **{abs(diff):.2f}%** (p={p_val:.4f}) despite gaining agenda control."
                     else:
-                        status = f"🟡 **Inconclusive**: Actual change was {diff:+.2f}% but not statistically significant (p={p_val:.3f})."
-                    return prediction, status
+                        return f"🟡 **Inconclusive**: Actual change was {diff:+.2f}% but not statistically significant (p={p_val:.3f})."
 
                 if lost_power:
-                    prediction = "Evidence usage should **INCREASE** (lost majority/agenda control)"
                     if p_val < 0.05:
                         if diff > 0:
-                            status = f"🟢 **Supports Theory**: Evidence usage significantly increased by **{abs(diff):.2f}%** (p={p_val:.4f}). Losing power forced a strategic shift to data-heavy discourse."
+                            return f"🟢 **Supports Theory**: Evidence usage significantly increased by **{abs(diff):.2f}%** (p={p_val:.4f}). Losing power forced a strategic shift to data-heavy discourse."
                         else:
-                            status = f"🔴 **Contradicts Theory**: Evidence usage significantly *decreased* by **{abs(diff):.2f}%** (p={p_val:.4f}) despite losing power."
+                            return f"🔴 **Contradicts Theory**: Evidence usage significantly *decreased* by **{abs(diff):.2f}%** (p={p_val:.4f}) despite losing power."
                     else:
-                        status = f"🟡 **Inconclusive**: Actual change was {diff:+.2f}% but not statistically significant (p={p_val:.3f})."
-                    return prediction, status
+                        return f"🟡 **Inconclusive**: Actual change was {diff:+.2f}% but not statistically significant (p={p_val:.3f})."
 
-            dem_pred, dem_status = evaluate_alignment("Democratic", dem_diff, dem_p, maj_before, maj_after)
-            gop_pred, gop_status = evaluate_alignment("Republican", gop_diff, gop_p, maj_before, maj_after)
+            dem_status = evaluate_alignment("Democratic", dem_diff, dem_p, maj_before, maj_after)
+            gop_status = evaluate_alignment("Republican", gop_diff, gop_p, maj_before, maj_after)
+
+            # Display the statistical grid
+            dem_html = f"""<div style="background: rgba(46, 91, 255, 0.08); border: 1px solid rgba(46, 91, 255, 0.15); padding: 15px; border-radius: 8px;">
+<strong style="color: #2E5BFF; font-size: 0.9rem; text-transform: uppercase;">Democrats (Blue)</strong>
+<div style="font-size: 1.5rem; font-weight: 700; margin-top: 5px;">{p_dem_b * 100:.2f}% ➔ {p_dem_a * 100:.2f}%</div>
+<div style="font-size: 0.76rem; color: rgba(255,255,255,0.6); margin-top: 3px;">Change: <strong>{dem_diff:+.2f}%</strong> (N={n_dem_b:,} ➔ {n_dem_a:,})</div>
+<div style="font-size: 0.8rem; margin-top: 8px; font-weight: 500; line-height: 1.3; color: #ffffff;">{dem_status}</div>
+</div>"""
+            gop_html = f"""<div style="background: rgba(255, 75, 75, 0.08); border: 1px solid rgba(255, 75, 75, 0.15); padding: 15px; border-radius: 8px;">
+<strong style="color: #FF4B4B; font-size: 0.9rem; text-transform: uppercase;">Republicans (Red)</strong>
+<div style="font-size: 1.5rem; font-weight: 700; margin-top: 5px;">{p_gop_b * 100:.2f}% ➔ {p_gop_a * 100:.2f}%</div>
+<div style="font-size: 0.76rem; color: rgba(255,255,255,0.6); margin-top: 3px;">Change: <strong>{gop_diff:+.2f}%</strong> (N={n_gop_b:,} ➔ {n_gop_a:,})</div>
+<div style="font-size: 0.8rem; margin-top: 8px; font-weight: 500; line-height: 1.3; color: #ffffff;">{gop_status}</div>
+</div>"""
 
             st.markdown(
-                f"""
-                <div class="glass-card" style="border-left: 4px solid #00cc96;">
-                    <h5 style="color: #ffffff; margin-top: 0; font-size: 1rem; font-weight: 600;">📈 Live Transition Experiment: Strategic Hypothesis Evaluation</h5>
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-top: 10px; margin-bottom: 15px;">
-                        <div style="background: rgba(46, 91, 255, 0.08); border: 1px solid rgba(46, 91, 255, 0.15); padding: 15px; border-radius: 8px;">
-                            <strong style="color: #2E5BFF; font-size: 0.9rem; text-transform: uppercase;">Democrats (Blue)</strong>
-                            <div style="font-size: 1.5rem; font-weight: 700; margin-top: 5px;">{p_dem_b * 100:.2f}% ➔ {p_dem_a * 100:.2f}%</div>
-                            <div style="font-size: 0.76rem; color: rgba(255,255,255,0.6); margin-top: 3px;">Change: <strong>{dem_diff:+.2f}%</strong> (N={n_dem_b:,} ➔ {n_dem_a:,})</div>
-                            <div style="font-size: 0.78rem; color: #ffe082; margin-top: 8px; font-style: italic;">Theory: {dem_pred}</div>
-                            <div style="font-size: 0.8rem; margin-top: 8px; font-weight: 500; line-height: 1.3;">{dem_status}</div>
-                        </div>
-                        <div style="background: rgba(255, 75, 75, 0.08); border: 1px solid rgba(255, 75, 75, 0.15); padding: 15px; border-radius: 8px;">
-                            <strong style="color: #FF4B4B; font-size: 0.9rem; text-transform: uppercase;">Republicans (Red)</strong>
-                            <div style="font-size: 1.5rem; font-weight: 700; margin-top: 5px;">{p_gop_b * 100:.2f}% ➔ {p_gop_a * 100:.2f}%</div>
-                            <div style="font-size: 0.76rem; color: rgba(255,255,255,0.6); margin-top: 3px;">Change: <strong>{gop_diff:+.2f}%</strong> (N={n_gop_b:,} ➔ {n_gop_a:,})</div>
-                            <div style="font-size: 0.78rem; color: #ffe082; margin-top: 8px; font-style: italic;">Theory: {gop_pred}</div>
-                            <div style="font-size: 0.8rem; margin-top: 8px; font-weight: 500; line-height: 1.3;">{gop_status}</div>
-                        </div>
-                    </div>
-                    <p style="font-size: 0.8rem; color: rgba(255, 255, 255, 0.55); margin-bottom: 0; line-height: 1.4;">
-                        <strong>Research Insight:</strong> The 'Strategic Discourse Shift' framework predicts that when formal legislative power transitions, the newly disempowered party experiences a substantial surge in evidence-based speech to compensate for their lack of agenda control. Meanwhile, the newly empowered party relaxes their empirical arguments.
-                    </p>
-                </div>
-                """,
+                f"""<div class="glass-card" style="border-left: 4px solid #00cc96; margin-top: 15px;">
+<h5 style="color: #ffffff; margin-top: 0; font-size: 1rem; font-weight: 600;">📈 Live Transition Experiment: Strategic Hypothesis Evaluation</h5>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-top: 10px; margin-bottom: 15px;">
+{dem_html}
+{gop_html}
+</div>
+<p style="font-size: 0.8rem; color: rgba(255, 255, 255, 0.55); margin-bottom: 0; line-height: 1.4; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 10px; margin-top: 12px;">
+<strong>Research Insight:</strong> The 'Strategic Discourse Shift' framework predicts that when formal legislative power transitions, the newly disempowered party experiences a substantial surge in evidence-based speech to compensate for their lack of agenda control. Meanwhile, the newly empowered party relaxes their empirical arguments.
+</p>
+</div>""",
                 unsafe_allow_html=True,
             )
         else:
@@ -710,9 +613,6 @@ def render_insights_tab(global_stats, empirical_keywords=None, whole_words=True)
                 top_committees = comm_df["committee_name"].value_counts().head(15).index
                 comm_filtered = comm_df[comm_df["committee_name"].isin(top_committees)].copy()
 
-                comm_gap = compute_proportion_stats(comm_filtered, ["committee_name", "minority"], "is_empirical_proxy")
-                comm_gap["Status"] = comm_gap["minority"].map({1: "Minority", 0: "Majority"})
-
                 # Sort committees by overall empirical percentage
                 overall_pct = (
                     comm_filtered.groupby("committee_name")["is_empirical_proxy"]
@@ -722,30 +622,31 @@ def render_insights_tab(global_stats, empirical_keywords=None, whole_words=True)
                 )
                 sorted_committees = overall_pct["committee_name"].tolist()
 
-                fig_comm = px.bar(
-                    comm_gap,
-                    y="committee_name",
-                    x="mean_pct",
+                render_proportion_chart(
+                    df=comm_filtered,
+                    group_cols=["committee_name", "minority"],
+                    x="committee_name",
+                    chart_type="bar",
                     color="Status",
-                    error_x="ci_95_pct",
                     barmode="group",
                     orientation="h",
-                    title="Evidence Usage by Committee (Top 15 Committees by Volume, with 95% CIs)",
+                    mapping_col="minority",
+                    mapping_dict={1: "Minority", 0: "Majority"},
+                    new_col_name="Status",
                     category_orders={"committee_name": sorted_committees},
+                    title="Evidence Usage by Committee (Top 15 Committees by Volume, with 95% CIs)",
                     color_discrete_map={"Minority": "#FFD700", "Majority": "#808080"},
                     labels={"committee_name": "Committee Name", "mean_pct": "% Empirical Discourse"},
+                    height=500,
                 )
-                apply_dark_theme(fig_comm, is_categorical=True)
-                fig_comm.update_layout(height=500, margin=dict(l=20))
-                st.plotly_chart(fig_comm, use_container_width=True)
 
-                st.markdown(
-                    """
-                    > **Research Insight: Technical vs. Partisan Committees**
-                    >
-                    > Fact-heavy committees (e.g., related to Science or Appropriations) typically feature a higher baseline of
-                    > empirical discourse, while the minority-majority gap varies significantly based on committee focus and polarization.
-                    """
+                render_glass_card(
+                    title="Research Insight: Technical vs. Partisan Committees",
+                    content=(
+                        "Fact-heavy committees (e.g., related to Science or Appropriations) typically feature a higher baseline of "
+                        "empirical discourse, while the minority-majority gap varies significantly based on committee focus and polarization."
+                    ),
+                    border_color="#ab63fa",
                 )
             else:
                 st.info("No valid committee names found in sample.")
@@ -768,31 +669,30 @@ def render_insights_tab(global_stats, empirical_keywords=None, whole_words=True)
                         return "Safe (>65%)"
 
                 safety_df["Safety Margin"] = safety_df["vote_pct"].apply(categorize_safety)
-                safety_gap = compute_proportion_stats(safety_df, ["Safety Margin", "minority"], "is_empirical_proxy")
-                safety_gap["Status"] = safety_gap["minority"].map({1: "Minority", 0: "Majority"})
 
-                fig_safety = px.bar(
-                    safety_gap,
+                render_proportion_chart(
+                    df=safety_df,
+                    group_cols=["Safety Margin", "minority"],
                     x="Safety Margin",
-                    y="mean_pct",
+                    chart_type="bar",
                     color="Status",
-                    error_y="ci_95_pct",
                     barmode="group",
+                    mapping_col="minority",
+                    mapping_dict={1: "Minority", 0: "Majority"},
+                    new_col_name="Status",
                     category_orders={"Safety Margin": ["Marginal (<55%)", "Competitive (55-65%)", "Safe (>65%)"]},
                     title="Evidence Usage by Electoral Safety and Party Power Status (with 95% CIs)",
                     color_discrete_map={"Minority": "#FFD700", "Majority": "#808080"},
                     labels={"Safety Margin": "Electoral Safety", "mean_pct": "% Empirical Discourse"},
                 )
-                apply_dark_theme(fig_safety, is_categorical=True)
-                st.plotly_chart(fig_safety, use_container_width=True)
 
-                st.markdown(
-                    """
-                    > **Research Insight: Electoral Margins & Justification**
-                    >
-                    > Lawmakers representing highly marginal or competitive seats are often under higher pressure to defend their votes
-                    > and discourse using objective data, compared to their peers in extremely safe districts.
-                    """
+                render_glass_card(
+                    title="Research Insight: Electoral Margins & Justification",
+                    content=(
+                        "Lawmakers representing highly marginal or competitive seats are often under higher pressure to defend their votes "
+                        "and discourse using objective data, compared to their peers in extremely safe districts."
+                    ),
+                    border_color="#808080",
                 )
             else:
                 st.info("Electoral safety data (vote_pct) is empty in sample.")
