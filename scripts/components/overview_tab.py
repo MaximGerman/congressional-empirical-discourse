@@ -2,25 +2,76 @@ import plotly.express as px
 import streamlit as st
 
 
+def metric_card(title, value, subtext="", accent_color="#2b5cff"):
+    st.markdown(
+        f"""
+        <div style="
+            background: rgba(22, 28, 45, 0.45);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-left: 4px solid {accent_color};
+            border-radius: 12px;
+            padding: 22px 18px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            margin-bottom: 15px;
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+        ">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                <div style="font-size: 0.82rem; font-weight: 600; color: rgba(255, 255, 255, 0.55); text-transform: uppercase; letter-spacing: 0.8px;">{title}</div>
+                <div style="width: 8px; height: 8px; border-radius: 50%; background-color: {accent_color}; box-shadow: 0 0 8px {accent_color};"></div>
+            </div>
+            <div style="font-size: 1.9rem; font-weight: 700; color: #ffffff; margin-top: 2px;">{value}</div>
+            <div style="font-size: 0.76rem; color: rgba(255, 255, 255, 0.38); margin-top: 3px; font-weight: 400;">{subtext}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_overview_tab(filtered_df):
-    # Metrics Row
+    if filtered_df.empty:
+        st.warning("No data available matching current sidebar filters.")
+        return
+
+    # Metrics Row using elegant HTML Cards
     m1, m2, m3, m4 = st.columns(4)
+
     with m1:
-        st.metric(
-            "Unique Members",
-            filtered_df["bioguide_id"].nunique() if "bioguide_id" in filtered_df.columns else 0,
+        members_count = filtered_df["bioguide_id"].nunique() if "bioguide_id" in filtered_df.columns else 0
+        metric_card(
+            title="Unique Members",
+            value=f"{members_count:,}",
+            subtext="Speakers mapped to Bio ID",
+            accent_color="#2b5cff",
         )
+
     with m2:
-        st.metric("Unique Hearings", filtered_df["hearing_id"].nunique())
-    with m3:
-        st.metric(
-            "Avg. Match Score",
-            f"{filtered_df['match_score'].mean():.1f}%" if "match_score" in filtered_df.columns else "N/A",
+        hearings_count = filtered_df["hearing_id"].nunique() if "hearing_id" in filtered_df.columns else 0
+        metric_card(
+            title="Unique Hearings",
+            value=f"{hearings_count:,}",
+            subtext="Congressional sessions",
+            accent_color="#00cc96",
         )
+
+    with m3:
+        avg_match = filtered_df["match_score"].mean() if "match_score" in filtered_df.columns else 0
+        match_str = f"{avg_match:.1f}%" if avg_match > 0 else "N/A"
+        metric_card(
+            title="Avg. Match Score",
+            value=match_str,
+            subtext="Speaker validation accuracy",
+            accent_color="#ab63fa",
+        )
+
     with m4:
-        st.metric(
-            "Female Representation",
-            f"{(filtered_df['female'].mean() * 100):.1f}%" if "female" in filtered_df.columns else "N/A",
+        female_pct = filtered_df["female"].mean() * 100 if "female" in filtered_df.columns else 0
+        female_str = f"{female_pct:.1f}%" if female_pct > 0 else "N/A"
+        metric_card(
+            title="Female Representation",
+            value=female_str,
+            subtext="Women in loaded sample",
+            accent_color="#ff6692",
         )
 
     st.markdown("---")
@@ -31,12 +82,23 @@ def render_overview_tab(filtered_df):
         st.subheader("Party Distribution")
         party_counts = filtered_df["party"].value_counts().reset_index()
         party_counts.columns = ["Party", "Sentences"]
+
         fig = px.pie(
             party_counts,
             values="Sentences",
             names="Party",
             color="Party",
             color_discrete_map={"Democratic": "#2E5BFF", "Republican": "#FF4B4B"},
+            hole=0.4,
+        )
+
+        fig.update_layout(
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
+            font_color="#ffffff",
+            font_family="'Outfit', sans-serif",
+            margin=dict(l=20, r=20, t=40, b=20),
+            legend=dict(orientation="h", yanchor="bottom", y=-0.1, xanchor="center", x=0.5),
         )
         st.plotly_chart(fig, use_container_width=True)
 
@@ -44,14 +106,39 @@ def render_overview_tab(filtered_df):
         st.subheader("Ideology vs. Seniority")
         if "nominate_dim1" in filtered_df.columns and "seniority" in filtered_df.columns:
             # Sample for plot to keep it fast
-            plot_df = filtered_df.dropna(subset=["nominate_dim1", "seniority"]).sample(min(2000, len(filtered_df)))
-            fig = px.scatter(
-                plot_df,
-                x="nominate_dim1",
-                y="seniority",
-                color="party",
-                hover_data=["speaker"],
-                labels={"nominate_dim1": "DW-NOMINATE (Lib-Con)", "seniority": "Terms Served"},
-                color_discrete_map={"Democratic": "#2E5BFF", "Republican": "#FF4B4B"},
-            )
-            st.plotly_chart(fig, use_container_width=True)
+            plot_df = filtered_df.dropna(subset=["nominate_dim1", "seniority"])
+            if not plot_df.empty:
+                plot_df = plot_df.sample(min(2000, len(plot_df)), random_state=42)
+                fig = px.scatter(
+                    plot_df,
+                    x="nominate_dim1",
+                    y="seniority",
+                    color="party",
+                    hover_data=["speaker"],
+                    labels={"nominate_dim1": "DW-NOMINATE (Lib-Con)", "seniority": "Terms Served"},
+                    color_discrete_map={"Democratic": "#2E5BFF", "Republican": "#FF4B4B"},
+                )
+
+                fig.update_layout(
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    font_color="#ffffff",
+                    font_family="'Outfit', sans-serif",
+                    margin=dict(l=10, r=10, t=40, b=10),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                    xaxis=dict(
+                        showgrid=True,
+                        gridcolor="rgba(255,255,255,0.06)",
+                        zeroline=True,
+                        zerolinecolor="rgba(255,255,255,0.15)",
+                    ),
+                    yaxis=dict(
+                        showgrid=True,
+                        gridcolor="rgba(255,255,255,0.06)",
+                    ),
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No ideology and seniority data available for selected filter range.")
+        else:
+            st.info("Ideology and seniority data (DW-NOMINATE) not available.")

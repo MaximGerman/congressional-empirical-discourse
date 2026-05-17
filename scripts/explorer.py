@@ -1,4 +1,8 @@
 import os
+import sys
+
+# Ensure the project root is in sys.path to resolve cross-module imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import pandas as pd
 import pyarrow.parquet as pq
@@ -13,24 +17,74 @@ from scripts.optimize_data import CSV_PATH, PARQUET_PATH, convert_csv_to_parquet
 # Page configuration
 st.set_page_config(
     page_title="BICAM Dataset Explorer",
-    page_icon="🏛️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# Premium styling
+# Premium styling and font loading
 st.markdown(
     """
     <style>
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+
+    html, body, [class*="css"] {
+        font-family: 'Outfit', sans-serif;
+    }
+
     .main {
-        background-color: #0e1117;
+        background-color: #0c0f17;
     }
+
+    /* Glassmorphic custom card widgets */
+    .glass-card {
+        background: rgba(22, 28, 45, 0.45);
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 20px;
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+    }
+
+    .glass-card:hover {
+        border-color: rgba(255, 255, 255, 0.12);
+        transform: translateY(-2px);
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+    }
+
+    /* Custom style for standard metric containers */
     .stMetric {
-        background-color: #1e2130;
-        padding: 15px;
-        border-radius: 10px;
-        border: 1px solid #3e4150;
+        background: rgba(30, 36, 56, 0.4) !important;
+        border: 1px solid rgba(255, 255, 255, 0.06) !important;
+        padding: 20px !important;
+        border-radius: 12px !important;
+        backdrop-filter: blur(8px) !important;
+        transition: all 0.3s ease !important;
     }
+
+    .stMetric:hover {
+        border-color: rgba(255, 255, 255, 0.15) !important;
+        background: rgba(35, 42, 65, 0.55) !important;
+    }
+
+    /* Elegant Sidebar Customization */
+    section[data-testid="stSidebar"] {
+        background-color: #090b11 !important;
+        border-right: 1px solid rgba(255, 255, 255, 0.05) !important;
+    }
+
+    /* Styled Subsections */
+    .section-header {
+        font-weight: 600;
+        letter-spacing: 0.5px;
+        color: #ffffff;
+        border-bottom: 2px solid #2b5cff;
+        padding-bottom: 8px;
+        margin-bottom: 15px;
+    }
+
     .reportview-container .main .block-container {
         padding-top: 2rem;
     }
@@ -45,13 +99,13 @@ def check_and_optimize():
     needs_optimization = False
 
     if not os.path.exists(PARQUET_PATH):
-        st.info("🚀 Optimized dataset not found. Preparing for first-time use...")
+        st.info("Optimized dataset not found. Preparing for first-time use...")
         needs_optimization = True
     elif os.path.exists(CSV_PATH):
         csv_mtime = os.path.getmtime(CSV_PATH)
         pq_mtime = os.path.getmtime(PARQUET_PATH)
         if csv_mtime > pq_mtime:
-            st.warning("⚠️ Source CSV is newer than the optimized dataset. Updating...")
+            st.warning("Source CSV is newer than the optimized dataset. Updating...")
             needs_optimization = True
 
     if needs_optimization:
@@ -68,10 +122,10 @@ def check_and_optimize():
 
         if success:
             progress_bar.empty()
-            st.success("✅ Optimization complete! Loading data...")
+            st.success("Optimization complete! Loading data...")
             st.cache_data.clear()  # Clear cache to force reload of new data
         else:
-            st.error("❌ Optimization failed. Please check the logs.")
+            st.error("Optimization failed. Please check the logs.")
             st.stop()
 
 
@@ -174,20 +228,65 @@ def get_global_overview():
         cols_to_read = [c for c in metadata_cols if c in available_cols]
         df_meta = pd.read_parquet(PARQUET_PATH, columns=cols_to_read) if cols_to_read else pd.DataFrame()
 
-        # 2. Sample rows for the heavy 'text' analysis
-        sample_size = min(100000, total_rows)
+        # 2. Sample rows for the heavy 'text' analysis using stratified row-group sampling (very low memory)
+        sample_size = min(250000, total_rows)
 
-        # 3. Read content columns for the sample
-        content_cols = ["text", "congress", "minority", "abs_dwnom1"]
+        # Determine the text column name in the Parquet file
+        text_col = (
+            "target_sentence" if "target_sentence" in available_cols else ("text" if "text" in available_cols else None)
+        )
+
+        # 3. Read content and covariate columns for the sample
+        content_cols = [
+            "congress",
+            "minority",
+            "abs_dwnom1",
+            "nominate_dim1",
+            "match_score",
+            "committee_name",
+            "chamber",
+            "vote_pct",
+            "party",
+            "state_abbrev",
+            "chairspeech",
+            "rankmemspeech",
+            "freshman",
+            "seniority",
+            "speaker",
+            "context_before",
+            "context_after",
+        ]
+        if text_col:
+            content_cols.append(text_col)
+
         content_cols_to_read = [c for c in content_cols if c in available_cols]
 
         if content_cols_to_read:
-            # Load a large enough sample directly or the whole columns if manageable
-            # For 100k rows, reading whole columns and then sampling is usually fine
-            df_content = pd.read_parquet(PARQUET_PATH, columns=content_cols_to_read)
-            sample_df = df_content.sample(sample_size, random_state=42)
+            num_row_groups = parquet_file.num_row_groups
+            rows_per_group = max(5000, sample_size // num_row_groups)
+
+            sample_dfs = []
+            for rg in range(num_row_groups):
+                try:
+                    df_rg = parquet_file.read_row_group(rg, columns=content_cols_to_read).to_pandas()
+                    if not df_rg.empty:
+                        sample_dfs.append(df_rg.sample(min(rows_per_group, len(df_rg)), random_state=42))
+                except Exception:
+                    continue
+
+            if sample_dfs:
+                sample_df = pd.concat(sample_dfs, ignore_index=True)
+                # Rename target_sentence to text for compatibility with the insights tab
+                if "target_sentence" in sample_df.columns:
+                    sample_df = sample_df.rename(columns={"target_sentence": "text"})
+                if len(sample_df) > sample_size:
+                    sample_df = sample_df.sample(sample_size, random_state=42)
+            else:
+                sample_df = pd.DataFrame(columns=content_cols_to_read)
         else:
-            sample_df = df_meta.sample(sample_size, random_state=42) if not df_meta.empty else pd.DataFrame()
+            sample_df = (
+                df_meta.sample(min(100000, len(df_meta)), random_state=42) if not df_meta.empty else pd.DataFrame()
+            )
 
         stats = {
             "total_rows": total_rows,
@@ -227,7 +326,7 @@ with st.sidebar:
     row_limit = st.select_slider("Number of Rows", options=[10000, 50000, 100000, 250000, 500000], value=100000)
 
     # Manual Regenerate Button
-    if st.button("🛠️ Force Regenerate Optimized Data", help="Manually re-run the CSV -> Parquet conversion"):
+    if st.button("Force Regenerate Optimized Data", help="Manually re-run the CSV -> Parquet conversion"):
         st.info("Re-optimizing data...")
         progress_bar = st.progress(0, text="Optimizing data for performance...")
 
@@ -255,9 +354,47 @@ with st.sidebar:
         help="Filtering here speeds up loading by skipping unused rows.",
     )
 
-    if st.button("🔄 Refresh Data Cache"):
+    if st.button("Refresh Data Cache"):
         st.cache_data.clear()
         st.rerun()
+
+    st.markdown("---")
+    with st.expander("Empirical Heuristics", expanded=True):
+        keyword_presets = {
+            "Empirical Core (Paper Baseline)": "data, evidence, statistics, statistical, study, report, research, analysis, percent, %, number, increase, decrease, caused, correlation, fact, empirical",
+            "Hard Sciences & Research": "data, evidence, statistics, statistical, study, report, research, analysis, percent, %, scientific, study, publication, peer-reviewed, laboratory",
+            "Economics & Finance": "deficit, inflation, revenue, budget, cost, gdp, dollars, billion, million, tax, interest, employment, trade, gross, market",
+            "Causality & Evidence": "caused, correlation, effect, because, result, consequence, fact, empirical, prove, demonstration, findings, variable, experimental",
+            "Custom (Edit below)": "",
+        }
+
+        selected_preset = st.selectbox(
+            "Keyword Preset Library",
+            options=list(keyword_presets.keys()),
+            index=0,
+            help="Choose a pre-defined set of research keywords or build a custom one.",
+        )
+
+        default_keywords = keyword_presets[selected_preset]
+
+        # If user chooses custom, we don't overwrite if they already typed something
+        if "custom_keywords_input" not in st.session_state:
+            st.session_state.custom_keywords_input = default_keywords
+
+        if selected_preset != "Custom (Edit below)":
+            st.session_state.custom_keywords_input = default_keywords
+
+        keywords_input = st.text_area(
+            "Keywords (comma-separated)",
+            value=st.session_state.custom_keywords_input,
+            help="Keywords to classify a sentence as empirical discourse.",
+            height=120,
+            key="keywords_text_area",
+        )
+
+        # Sync session state
+        st.session_state.custom_keywords_input = keywords_input
+        empirical_keywords = [kw.strip().lower() for kw in keywords_input.split(",") if kw.strip()]
 
 # Pre-compute global stats for the insights tab
 global_stats = get_global_overview()
@@ -298,7 +435,7 @@ st.markdown(
 )
 
 # Main Tabs
-tabs = st.tabs(["📊 Overview", "🔍 Transcript Search", "🧪 Matching Diagnostics", "🧬 Data Science & Insights"])
+tabs = st.tabs(["Overview", "Transcript Search", "Matching Diagnostics", "Data Science & Insights"])
 
 with tabs[0]:
     render_overview_tab(filtered_df)
@@ -310,8 +447,8 @@ with tabs[2]:
     render_diagnostics_tab(filtered_df)
 
 with tabs[3]:
-    render_insights_tab(global_stats)
+    render_insights_tab(global_stats, empirical_keywords=empirical_keywords)
 
 # Footer
 st.sidebar.markdown("---")
-st.sidebar.info("Data Dictionary available in `docs/project/data_dictionary.md`.")
+st.sidebar.info("Data Dictionary available in docs/project/data_dictionary.md.")
