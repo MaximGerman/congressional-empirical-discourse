@@ -188,7 +188,7 @@ def process_single_hearing(hearing_id, transcript_text):
     return create_sentence_records(chunks, hearing_id)
 
 
-def _try_exact_match(name, congress_members):
+def _try_exact_match(name, congress_members, full_speaker_name=None):
     """Try exact last_name_upper match; return member dict or None."""
     exact = congress_members[congress_members["last_name_upper"] == name]
     if len(exact) == 1:
@@ -202,6 +202,25 @@ def _try_exact_match(name, congress_members):
             "match_score": 100,
             "match_type": "exact",
         }
+    elif len(exact) > 1 and full_speaker_name:
+        # Ambiguous match: Try to disambiguate using first name
+        valid_candidates = []
+        for _, row in exact.iterrows():
+            first = str(row.get("first_name", "")).strip().upper()
+            if first and (first in full_speaker_name.split() or first[0] in full_speaker_name.split()):
+                valid_candidates.append(row)
+
+        if len(valid_candidates) == 1:
+            row = valid_candidates[0]
+            return {
+                "bioguide_id": row["bioguide_id"],
+                "matched_name": row["last_name"],
+                "first_name": row["first_name"],
+                "party": row["party"],
+                "state": row.get("state", ""),
+                "match_score": 100,
+                "match_type": "exact_disambiguated",
+            }
     return None
 
 
@@ -233,15 +252,16 @@ def match_speaker_to_member(speaker_last_name, member_lookup_df, congress, score
         return None
 
     # Try exact match on full name first
-    retVal = _try_exact_match(speaker_last_name, congress_members)
+    retVal = _try_exact_match(speaker_last_name, congress_members, full_speaker_name=speaker_last_name)
     if retVal:
         return retVal
 
     # For multi-word names, try exact match on last word only
     if speaker_last_word and speaker_last_word != speaker_last_name:
-        retVal = _try_exact_match(speaker_last_word, congress_members)
+        retVal = _try_exact_match(speaker_last_word, congress_members, full_speaker_name=speaker_last_name)
         if retVal:
-            retVal["match_type"] = "exact_last_word"
+            if retVal.get("match_type") != "exact_disambiguated":
+                retVal["match_type"] = "exact_last_word"
             return retVal
 
     # Fuzzy match

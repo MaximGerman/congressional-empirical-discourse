@@ -96,8 +96,26 @@ def _merge_hearing_metadata(sentences_df, new_era):
 
     sentences_df = sentences_df.merge(hearing_info, on="hearing_id", how="left")
 
-    # Merge committee info (take first committee per hearing)
-    first_committee = hearings_committees.drop_duplicates(subset="hearing_id", keep="first")
+    # Fix missing committee names: raw dataset has duplicate/incorrect Senate mappings for House hearings
+    hc = hearings_committees.merge(hearing_info[["hearing_id", "chamber"]], on="hearing_id", how="left")
+
+    def matches_chamber(row):
+        if pd.isna(row["chamber"]) or pd.isna(row["committee_code"]):
+            return 0
+        if row["chamber"] == "house" and str(row["committee_code"]).startswith("hs"):
+            return 1
+        if row["chamber"] == "senate" and str(row["committee_code"]).startswith("ss"):
+            return 1
+        return 0
+
+    hc["_matches_chamber"] = hc.apply(matches_chamber, axis=1)
+    hc["_has_name"] = hc["committee_name"].notna().astype(int)
+
+    # Sort to prioritize chamber-matching codes and non-null names, then deduplicate
+    hc = hc.sort_values(by=["_matches_chamber", "_has_name"], ascending=[False, False])
+    first_committee = hc.drop_duplicates(subset="hearing_id", keep="first")
+
+    # Merge committee info
     sentences_df = sentences_df.merge(
         first_committee[["hearing_id", "committee_code", "committee_name"]], on="hearing_id", how="left"
     )
@@ -133,14 +151,30 @@ def _filter_witnesses(sentences_df):
 def _match_speakers_to_members(legislators_df, new_era):
     # Build member lookup from terms (primary) + hearing_members (fills gaps, esp. 118th)
     members_df = load_members()
+    member_cols = ["bioguide_id", "last_name", "first_name", "party", "state"]
+    member_info = members_df[member_cols].copy() if not members_df.empty else pd.DataFrame(columns=member_cols)
+    member_info = member_info.drop_duplicates(subset=["bioguide_id"], keep="first")
+
     terms_df = load_members_terms()
     member_lookup_terms = build_member_lookup(members_df, terms_df)
 
     hearing_members = load_hearings_members()
     member_lookup_hm = build_member_lookup_from_hearing_members(hearing_members, members_df, new_era)
 
-    # Combine both sources, deduplicate
-    member_lookup = pd.concat([member_lookup_terms, member_lookup_hm], ignore_index=True)
+    # --- Gap 3 Remediation: Augment with Voteview (HSall_members.csv) ---
+    import os
+
+    vv_path = "data/external/HSall_members.csv"
+    if os.path.exists(vv_path):
+        vv = pd.read_csv(vv_path)
+        vv_house = vv[(vv["chamber"] == "House") & (vv["congress"].isin([115, 116, 117, 118]))].copy()
+        vv_lookup = vv_house[["bioguide_id", "congress"]].merge(member_info, on="bioguide_id", how="inner")
+        vv_lookup["last_name_upper"] = vv_lookup["last_name"].str.upper()
+    else:
+        vv_lookup = pd.DataFrame()
+
+    # Combine all sources, deduplicate
+    member_lookup = pd.concat([member_lookup_terms, member_lookup_hm, vv_lookup], ignore_index=True)
     member_lookup = member_lookup.drop_duplicates(subset=["bioguide_id", "congress"])
     logger.info(
         "Member lookup table: %d entries (terms: %d, hearing_members added: %d)",
@@ -157,16 +191,51 @@ def _match_speakers_to_members(legislators_df, new_era):
 
     logger.info("Matching speakers to members database...")
 
-    # Strategy: match unique (hearing_id, speaker_last_name, speaker_last_word) pairs,
+    # Strategy: match unique (hearing_id, speaker_last_name, speaker_last_word, committee_code) pairs,
     # then merge results back. This reduces millions of lookups to thousands.
     unique_pairs = legislators_df[
-        ["hearing_id", "speaker_last_name", "speaker_last_word", "congress"]
+        ["hearing_id", "speaker_last_name", "speaker_last_word", "congress", "committee_code"]
     ].drop_duplicates()
     logger.info("Unique (hearing, speaker) pairs to match: %d", len(unique_pairs))
 
     # --- Step A: hearing_member_exact (hearing_id + name) ---
     hm_matchable = _build_unique_matchable(hearing_member_map, ["hearing_id"])
     matched = _vectorized_merge_match(unique_pairs, hm_matchable, "hearing_id", "hearing_member_exact")
+
+    # --- Step 0: Resolve Anonymous Chairs (Gap 2) ---
+    from src.leadership import load_committee_leaders, normalize_committee_code
+
+    target_congresses = sorted(legislators_df["congress"].dropna().unique().astype(int).tolist())
+    leaders_df = load_committee_leaders(target_congresses=target_congresses)
+    chair_lookup = leaders_df[leaders_df["role"] == "chair"][["congress", "thomas_id", "bioguide_id"]].copy()
+    chair_lookup = chair_lookup.drop_duplicates(subset=["congress", "thomas_id"], keep="first")
+
+    is_anon_chair = matched["speaker_last_name"].isin({"CHAIRMAN", "CHAIRWOMAN", "CHAIRPERSON"})
+    if is_anon_chair.any():
+        matched.loc[is_anon_chair, "_thomas_id"] = matched.loc[is_anon_chair, "committee_code"].apply(
+            normalize_committee_code
+        )
+        chair_matches = matched[is_anon_chair].merge(
+            chair_lookup,
+            left_on=["congress", "_thomas_id"],
+            right_on=["congress", "thomas_id"],
+            how="left",
+            suffixes=("", "_chair"),
+        )
+        chair_matches = chair_matches.drop(
+            columns=["bioguide_id", "last_name", "first_name", "party", "state"], errors="ignore"
+        )
+        chair_matches = chair_matches.merge(
+            member_info, left_on="bioguide_id_chair", right_on="bioguide_id", how="left"
+        )
+        chair_matches_index = chair_matches.set_index(matched[is_anon_chair].index)
+        for col in ["bioguide_id", "last_name", "first_name", "party", "state"]:
+            if col in chair_matches_index.columns:
+                matched.loc[is_anon_chair, col] = chair_matches_index[col].values
+
+        has_chair_match = is_anon_chair & matched["bioguide_id"].notna()
+        matched.loc[has_chair_match, "match_score"] = 100
+        matched.loc[has_chair_match, "match_type"] = "committee_chair_exact"
 
     # --- Step B: congress_exact (congress + name) ---
     unmatched_mask = matched["bioguide_id"].isna()
@@ -220,6 +289,7 @@ def _match_speakers_to_members(legislators_df, new_era):
             [
                 "hearing_id",
                 "speaker_last_name",
+                "committee_code",
                 "bioguide_id",
                 "first_name",
                 "party",
@@ -228,7 +298,7 @@ def _match_speakers_to_members(legislators_df, new_era):
                 "match_type",
             ]
         ].rename(columns={"first_name": "member_first_name", "state": "member_state"}),
-        on=["hearing_id", "speaker_last_name"],
+        on=["hearing_id", "speaker_last_name", "committee_code"],
         how="left",
     )
 

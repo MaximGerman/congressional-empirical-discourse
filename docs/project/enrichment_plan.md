@@ -153,8 +153,10 @@ Implemented as a static lookup table of House standing committee chairs and rank
 - `rankmemspeech` (int, 0/1)
 - `leader` (int, 0/1)
 
-### Complication
+### Complication & Limitation
 Committee codes may differ between BICAM and congress-legislators. Need a mapping table or fuzzy match on committee names.
+
+**"Acting Chair" Transcript Limitation:** During long committee sessions, the official Chair occasionally steps out and designates a junior majority member as "Acting Chairman" or "Chair Pro Tempore." The GPO transcript continues to attribute speech to "The Chairman." Our pipeline dynamically resolves anonymous "The Chairman" and "The Chairwoman" attributions to the official committee Chair using the static `COMMITTEE_LEADERS` lookup. Consequently, statements spoken by a temporary presider may be attributed to the official chair. Because official chairs preside over the vast majority of substantive speech (opening statements and key questioning blocks), this introduces a minor, acceptable error margin, but it must be explicitly documented in the final research methodology.
 
 ---
 

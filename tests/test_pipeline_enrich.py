@@ -15,11 +15,12 @@ def mock_legislators_df():
     """Simple sentences/legislators dataframe for matching tests."""
     return pd.DataFrame(
         {
-            "hearing_id": ["H1", "H1", "H2", "H2"],
-            "speaker": ["Mr. SMITH", "Chairman JONES", "Mr. SMITH", "Ms. DOE"],
-            "speaker_last_name": ["SMITH", "JONES", "SMITH", "DOE"],
-            "speaker_last_word": ["SMITH", "JONES", "SMITH", "DOE"],
-            "congress": [115, 115, 116, 116],
+            "hearing_id": ["H1", "H1", "H2", "H2", "H2"],
+            "speaker": ["Mr. SMITH", "Chairman JONES", "Mr. SMITH", "Ms. DOE", "The Chairman"],
+            "speaker_last_name": ["SMITH", "JONES", "SMITH", "DOE", "CHAIRMAN"],
+            "speaker_last_word": ["SMITH", "JONES", "SMITH", "DOE", "CHAIRMAN"],
+            "congress": [115, 115, 116, 116, 116],
+            "committee_code": ["hsgo00", "hsgo00", "hsgo00", "hsas00", "hsas00"],
         }
     )
 
@@ -197,3 +198,67 @@ def test_apply_enrichments_integration(monkeypatch):
     assert result.loc[result["bioguide_id"] == "S001", "minority"].iloc[0] == 0
     # 116th D is majority -> minority=0
     assert result.loc[result["bioguide_id"] == "J002", "minority"].iloc[0] == 0
+
+
+def test_match_speakers_multi_chair_edge_case(monkeypatch):
+    """Test that a committee with multiple chairs doesn't cause a row explosion."""
+    import pandas as pd
+
+    from src.pipeline_enrich import _match_speakers_to_members
+
+    mock_legislators_df = pd.DataFrame(
+        {
+            "hearing_id": ["H1"],
+            "speaker": ["The Chairman"],
+            "speaker_last_name": ["CHAIRMAN"],
+            "speaker_last_word": ["CHAIRMAN"],
+            "congress": [116],
+            "committee_code": ["hsgo00"],
+        }
+    )
+
+    # Mock multiple chairs for the same committee
+    mock_leaders_df = pd.DataFrame(
+        {
+            "congress": [116, 116],
+            "thomas_id": ["HSGO", "HSGO"],
+            "bioguide_id": ["C001", "C002"],
+            "role": ["chair", "chair"],
+        }
+    )
+
+    monkeypatch.setattr(
+        "src.pipeline_enrich.load_members",
+        lambda: pd.DataFrame(
+            {
+                "bioguide_id": ["C001", "C002"],
+                "last_name": ["Chair1", "Chair2"],
+                "first_name": ["A", "B"],
+                "party": ["R", "R"],
+                "state": ["NY", "NY"],
+            }
+        ),
+    )
+    monkeypatch.setattr("src.pipeline_enrich.load_members_terms", lambda: pd.DataFrame())
+    monkeypatch.setattr(
+        "src.pipeline_enrich.build_member_lookup",
+        lambda m, t: pd.DataFrame(columns=["bioguide_id", "congress", "last_name_upper", "party", "state"]),
+    )
+    monkeypatch.setattr("src.pipeline_enrich.load_hearings_members", lambda: pd.DataFrame())
+    monkeypatch.setattr(
+        "src.pipeline_enrich.build_member_lookup_from_hearing_members",
+        lambda hm, m, era: pd.DataFrame(columns=["bioguide_id", "congress", "last_name_upper", "party", "state"]),
+    )
+    monkeypatch.setattr(
+        "src.pipeline_enrich.build_hearing_member_map",
+        lambda hm, m: pd.DataFrame(columns=["hearing_id", "bioguide_id", "last_name_upper"]),
+    )
+    monkeypatch.setattr("src.pipeline_enrich.match_speaker_to_member", lambda *args, **kwargs: None)
+    monkeypatch.setattr("src.leadership.load_committee_leaders", lambda target_congresses: mock_leaders_df)
+
+    result = _match_speakers_to_members(mock_legislators_df, pd.DataFrame())
+
+    # Assert row count hasn't exploded
+    assert len(result) == 1
+    # Assert we picked the first chair
+    assert result.iloc[0]["bioguide_id"] == "C001"
