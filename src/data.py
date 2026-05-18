@@ -53,7 +53,7 @@ def load_hearings_metadata():
     return bicam.load_dataframe("hearings", "hearings_metadata.csv", download=True, confirm=True)
 
 
-def load_hearings_texts_chunked(target_ids, chunksize=500):
+def load_hearings_texts_chunked(target_ids, chunksize=10000):
     """
     Load transcripts for specific hearing IDs by reading in chunks.
     The full file is ~5.4GB so we don't load it all at once.

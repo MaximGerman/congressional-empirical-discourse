@@ -313,24 +313,4 @@ def is_likely_witness(speaker_str):
         "Senator",
         "Representative",
     )
-    for title in legislator_titles:
-        if speaker_str.startswith(title):
-            return False
-    # Titles that suggest a witness
-    witness_titles = (
-        "Dr.",
-        "General",
-        "Admiral",
-        "Secretary",
-        "Judge",
-        "Ambassador",
-        "Governor",
-        "Mayor",
-        "Professor",
-        "Reverend",
-        "Father",
-    )
-    for title in witness_titles:
-        if speaker_str.startswith(title):
-            return True
-    return True
+    return all(not speaker_str.startswith(title) for title in legislator_titles)

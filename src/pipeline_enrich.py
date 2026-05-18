@@ -9,7 +9,6 @@ from src.data import (
     build_hearing_member_map,
     build_member_lookup,
     build_member_lookup_from_hearing_members,
-    get_majority_status,
     load_hearings_committees,
     load_hearings_dates,
     load_hearings_members,
@@ -19,7 +18,7 @@ from src.data import (
 )
 from src.elections import load_elections_data
 from src.leadership import prepare_leadership_enrichment
-from src.preprocess import extract_name_parts, is_likely_witness, match_speaker_to_member
+from src.preprocess import extract_name_parts, match_speaker_to_member
 from src.voteview import prepare_voteview_enrichment
 
 logger = logging.getLogger(__name__)
@@ -133,8 +132,19 @@ def _merge_hearing_metadata(sentences_df, new_era):
 
 
 def _filter_witnesses(sentences_df):
-    # Filter out likely witnesses (title-based heuristic)
-    sentences_df["is_witness"] = sentences_df["speaker"].apply(is_likely_witness)
+    # Filter out likely witnesses (vectorized title-based heuristic)
+    legislator_prefixes = (
+        "Mr.",
+        "Mrs.",
+        "Ms.",
+        "Chairman",
+        "Chairwoman",
+        "The Chairman",
+        "The Chairwoman",
+        "Senator",
+        "Representative",
+    )
+    sentences_df["is_witness"] = ~sentences_df["speaker"].fillna("").str.startswith(legislator_prefixes)
     n_witness = sentences_df["is_witness"].sum()
     n_total = len(sentences_df)
     logger.info(
@@ -326,23 +336,22 @@ def _match_speakers_to_members(legislators_df, new_era):
 
 
 def _apply_enrichments(legislators_df):
-    # Add majority/minority status (vectorized)
-    majority_map = {
-        (p, c): get_majority_status(p, c)
-        for p in ["Republican", "Democratic", "Democrat", "Independent", "Libertarian"]
-        for c in HOUSE_MAJORITY
-    }
+    # Add majority/minority status (vectorized and robust to unlisted third parties)
+    majority_party = legislators_df["congress"].map(HOUSE_MAJORITY)
+    normalized_party = legislators_df["party"].str.strip().replace({"Democrat": "Democratic"})
 
-    legislators_df["minority"] = legislators_df.apply(
-        lambda r: majority_map.get((r["party"], r["congress"])) if pd.notna(r["party"]) else None, axis=1
-    )
+    legislators_df["minority"] = (normalized_party != majority_party).astype("Int8")
+    # Maintain nulls for rows with missing party or unknown congress majority
+    null_mask = legislators_df["party"].isna() | majority_party.isna()
+    legislators_df.loc[null_mask, "minority"] = pd.NA
 
     legislators_df["unified"] = legislators_df["congress"].map(UNIFIED_GOVERNMENT)
-    legislators_df["minuni"] = legislators_df["minority"] * legislators_df["unified"]
+    legislators_df["minuni"] = (legislators_df["minority"] * legislators_df["unified"]).astype("Int8")
 
-    legislators_df["dem"] = legislators_df["party"].apply(
-        lambda p: 1 if pd.notna(p) and str(p).strip() in ("Democratic", "Democrat") else (0 if pd.notna(p) else None)
-    )
+    # Add democrat flag (vectorized)
+    legislators_df["dem"] = pd.Series(pd.NA, index=legislators_df.index, dtype="Int8")
+    is_dem = normalized_party.isin({"Democratic", "Democrat"})
+    legislators_df.loc[legislators_df["party"].notna(), "dem"] = is_dem[legislators_df["party"].notna()].astype("Int8")
 
     logger.info("Party breakdown:\n%s", legislators_df["party"].value_counts().to_string())
     logger.info("Minority status (1=minority, 0=majority):\n%s", legislators_df["minority"].value_counts().to_string())
