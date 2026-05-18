@@ -22,7 +22,7 @@ def generate_summary_table(parquet_path: str) -> pd.DataFrame:
 
     # Read all small columns in a single optimized batch
     if small_cols:
-        small_df = pd.read_parquet(parquet_path, columns=small_cols)
+        small_df = pd.read_parquet(parquet_path, columns=small_cols, engine="pyarrow", dtype_backend="pyarrow")
     else:
         small_df = pd.DataFrame()
 

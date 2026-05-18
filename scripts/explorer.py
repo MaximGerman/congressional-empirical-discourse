@@ -150,7 +150,7 @@ def get_dataset_info():
 
     try:
         # With Parquet, reading a single column is extremely fast and memory-efficient
-        df_c = pd.read_parquet(full_path, columns=["congress"])
+        df_c = pd.read_parquet(full_path, columns=["congress"], engine="pyarrow", dtype_backend="pyarrow")
         return df_c["congress"], len(df_c)
     except Exception as e:
         st.error(f"Error indexing dataset: {e}")
@@ -172,7 +172,7 @@ def load_data(nrows=100000, sampling="Top N", selected_congresses=None):
             filters.append(("congress", "in", selected_congresses))
 
         # Load data with filters (pyarrow engine handles this efficiently)
-        df = pd.read_parquet(full_path, filters=filters if filters else None)
+        df = pd.read_parquet(full_path, filters=filters if filters else None, engine="pyarrow", dtype_backend="pyarrow")
 
         # Apply sampling in memory (fast since the dataset is now compressed and filtered)
         if sampling == "Random" and len(df) > nrows:
@@ -232,7 +232,11 @@ def get_global_overview():
             "unified",
         ]
         cols_to_read = [c for c in metadata_cols if c in available_cols]
-        df_meta = pd.read_parquet(PARQUET_PATH, columns=cols_to_read) if cols_to_read else pd.DataFrame()
+        df_meta = (
+            pd.read_parquet(PARQUET_PATH, columns=cols_to_read, engine="pyarrow", dtype_backend="pyarrow")
+            if cols_to_read
+            else pd.DataFrame()
+        )
 
         # 2. Sample rows for the heavy 'text' analysis using stratified row-group sampling (very low memory)
         sample_size = min(250000, total_rows)

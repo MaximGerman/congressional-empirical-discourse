@@ -15,7 +15,7 @@ def test_enriched_data_schema():
         "chamber",
         "party",
         "bioguide_id",
-        "target_sentence",
+        "text",
         "nominate_dim1",
         "seniority",
         "unified",
