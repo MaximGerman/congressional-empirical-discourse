@@ -1,8 +1,10 @@
 import re
 
+import pandas as pd
 import streamlit as st
 
 from scripts.components.utils import highlight_search_terms
+from scripts.optimize_data import PARQUET_PATH
 
 
 def render_search_tab(filtered_df):
@@ -119,8 +121,24 @@ def render_search_tab(filtered_df):
                     date_str = date_val.strftime("%Y-%m-%d") if hasattr(date_val, "strftime") else str(date_val)
                     committee = selected_row.get("committee_name", "Unknown Committee")
 
-                    context_before = selected_row.get("context_before", None)
-                    context_after = selected_row.get("context_after", None)
+                    # Dynamically lazy-load context columns for just this 1 selected row using PyArrow filter
+                    context_before = None
+                    context_after = None
+                    try:
+                        context_df = pd.read_parquet(
+                            PARQUET_PATH,
+                            columns=["context_before", "context_after"],
+                            filters=[
+                                ("hearing_id", "==", selected_row["hearing_id"]),
+                                ("sentence_id", "==", int(selected_row["sentence_id"])),
+                            ],
+                            engine="pyarrow",
+                        )
+                        if not context_df.empty:
+                            context_before = context_df.iloc[0]["context_before"]
+                            context_after = context_df.iloc[0]["context_after"]
+                    except Exception as e:
+                        st.caption(f"*(Note: Surrounding context details could not be dynamically fetched: {e})*")
 
                     before_str = (
                         context_before

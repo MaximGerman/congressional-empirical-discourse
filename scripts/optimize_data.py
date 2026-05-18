@@ -43,19 +43,21 @@ def convert_csv_to_parquet(progress_callback=None):
         "rankmemspeech": "Int8",
         "leader": "Int8",
         "member_state": "category",
+        "state_abbrev": "category",
+        "female": "Int8",
+        "district_code": "Int8",
+        "seniority": "Int8",
+        "seniority_sq": "Int16",
     }
 
     writer = None
 
-    # Use chunksize to keep memory usage low and constant
-    reader = pd.read_csv(CSV_PATH, chunksize=CHUNK_SIZE, dtype=dtype)
+    # Use chunksize to keep memory usage low and constant, and parse dates at C-level
+    parse_cols = ["hearing_date"]
+    reader = pd.read_csv(CSV_PATH, chunksize=CHUNK_SIZE, dtype=dtype, parse_dates=parse_cols)
 
     total_chunks = (total_rows // CHUNK_SIZE) + 1
     for i, chunk in enumerate(tqdm(reader, total=total_chunks)):
-        # Convert date column if it exists
-        if "hearing_date" in chunk.columns:
-            chunk["hearing_date"] = pd.to_datetime(chunk["hearing_date"])
-
         # Rename target_sentence to text if needed
         if "text" not in chunk.columns and "target_sentence" in chunk.columns:
             chunk = chunk.rename(columns={"target_sentence": "text"})

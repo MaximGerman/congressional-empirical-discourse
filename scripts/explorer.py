@@ -166,19 +166,65 @@ def load_data(nrows=100000, sampling="Top N", selected_congresses=None):
         return None
 
     try:
-        # Parquet filters are much more efficient than CSV skiprows
-        filters = []
-        if selected_congresses:
-            filters.append(("congress", "in", selected_congresses))
+        # Get all columns from Parquet file schema to exclude context columns
+        parquet_file = pq.ParquetFile(full_path)
+        available_cols = parquet_file.schema.names
+        exclude_cols = {"context_before", "context_after"}
+        columns_to_load = [col for col in available_cols if col not in exclude_cols]
 
-        # Load data with filters (pyarrow engine handles this efficiently)
-        df = pd.read_parquet(full_path, filters=filters if filters else None, engine="pyarrow", dtype_backend="pyarrow")
+        tables = []
+        num_row_groups = parquet_file.num_row_groups
 
-        # Apply sampling in memory (fast since the dataset is now compressed and filtered)
-        if sampling == "Random" and len(df) > nrows:
-            df = df.sample(nrows, random_state=42)
-        elif len(df) > nrows:
-            df = df.head(nrows)
+        if sampling == "Random":
+            # Stratified row group sampling: read a small sample from each row group
+            # to avoid loading the whole 3.5M rows into memory at once
+            rows_per_group = max(1000, (nrows // num_row_groups) + 1)
+
+            for rg in range(num_row_groups):
+                try:
+                    rg_table = parquet_file.read_row_group(rg, columns=columns_to_load, use_pandas_metadata=True)
+                    rg_df = rg_table.to_pandas(dtype_backend="pyarrow")
+
+                    if selected_congresses:
+                        rg_df = rg_df[rg_df["congress"].isin(selected_congresses)]
+
+                    if not rg_df.empty:
+                        sample_size = min(rows_per_group, len(rg_df))
+                        tables.append(rg_df.sample(sample_size, random_state=42))
+                except Exception:
+                    continue
+
+            if tables:
+                df = pd.concat(tables, ignore_index=True)
+                if len(df) > nrows:
+                    df = df.sample(nrows, random_state=42)
+            else:
+                df = pd.DataFrame(columns=columns_to_load)
+        else:
+            # Top N: read row groups sequentially until we accumulate nrows
+            rows_accumulated = 0
+            for rg in range(num_row_groups):
+                try:
+                    rg_table = parquet_file.read_row_group(rg, columns=columns_to_load, use_pandas_metadata=True)
+                    rg_df = rg_table.to_pandas(dtype_backend="pyarrow")
+
+                    if selected_congresses:
+                        rg_df = rg_df[rg_df["congress"].isin(selected_congresses)]
+
+                    if not rg_df.empty:
+                        tables.append(rg_df)
+                        rows_accumulated += len(rg_df)
+                        if rows_accumulated >= nrows:
+                            break
+                except Exception:
+                    continue
+
+            if tables:
+                df = pd.concat(tables, ignore_index=True)
+                if len(df) > nrows:
+                    df = df.head(nrows)
+            else:
+                df = pd.DataFrame(columns=columns_to_load)
 
         # Post-processing
         if "hearing_date" in df.columns:
@@ -263,8 +309,6 @@ def get_global_overview():
             "freshman",
             "seniority",
             "speaker",
-            "context_before",
-            "context_after",
         ]
         if text_col:
             content_cols.append(text_col)
