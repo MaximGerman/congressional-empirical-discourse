@@ -24,6 +24,7 @@ from src.data import (
     filter_hearings_by_congress,
     load_hearings,
     load_hearings_texts_chunked,
+    optimize_dataframe,
 )
 from src.pipeline_enrich import step4_enrich_metadata
 from src.preprocess import (
@@ -206,10 +207,16 @@ def run_pipeline():
     # Step 4: Enrich with metadata
     legislators_df = step4_enrich_metadata(sentences_df, new_era)
 
-    # Save enriched data
-    enriched_path = os.path.join(OUTPUT_DIR, "sentences_enriched.parquet")
-    legislators_df.to_parquet(enriched_path, index=False)
-    logger.info("Enriched legislator sentences saved to Parquet: %s", enriched_path)
+    # Save enriched data as standard CSV
+    enriched_csv_path = os.path.join(OUTPUT_DIR, "sentences_enriched.csv")
+    legislators_df.to_csv(enriched_csv_path, index=False)
+    logger.info("Enriched legislator sentences saved to CSV: %s", enriched_csv_path)
+
+    # Optimize and save as Parquet
+    optimized_df = optimize_dataframe(legislators_df)
+    enriched_parquet_path = os.path.join(OUTPUT_DIR, "sentences_enriched.parquet")
+    optimized_df.to_parquet(enriched_parquet_path, index=False)
+    logger.info("Optimized enriched legislator sentences saved to Parquet: %s", enriched_parquet_path)
 
     # Step 5: Create sample
     sample = step5_create_sample(legislators_df)

@@ -229,3 +229,52 @@ def get_majority_status(party, congress):
     if party_norm == majority_party:
         return 0  # majority
     return 1  # minority
+
+
+def optimize_dataframe(df):
+    """
+    Renames the columns and casts data types of the enriched DataFrame
+    to optimize memory and speed for Streamlit and other downstream consumers.
+    """
+    df = df.copy()
+
+    # Rename target_sentence to text if needed
+    if "text" not in df.columns and "target_sentence" in df.columns:
+        df = df.rename(columns={"target_sentence": "text"})
+
+    # Define types to ensure consistency and minimize memory
+    dtype = {
+        "congress": "int16",
+        "chamber": "category",
+        "party": "category",
+        "match_type": "category",
+        "dem": "Int8",
+        "minority": "Int8",
+        "unified": "Int8",
+        "minuni": "Int8",
+        "freshman": "Int8",
+        "chairspeech": "Int8",
+        "rankmemspeech": "Int8",
+        "leader": "Int8",
+        "member_state": "category",
+        "state_abbrev": "category",
+        "female": "Int8",
+        "district_code": "Int8",
+        "seniority": "Int8",
+        "seniority_sq": "Int16",
+    }
+
+    for col, dt in dtype.items():
+        if col in df.columns:
+            try:
+                df[col] = df[col].astype(dt)
+            except Exception as e:
+                logger.warning("Could not cast column %s to %s: %s", col, dt, e)
+
+    if "hearing_date" in df.columns:
+        try:
+            df["hearing_date"] = pd.to_datetime(df["hearing_date"])
+        except Exception as e:
+            logger.warning("Could not cast hearing_date to datetime: %s", e)
+
+    return df

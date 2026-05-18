@@ -116,7 +116,11 @@ def check_and_optimize():
 
     if needs_optimization:
         if not os.path.exists(CSV_PATH):
-            st.error(f"Error: Source file `{CSV_PATH}` not found. Cannot optimize.")
+            st.error(
+                f"Error: Neither the optimized Parquet `{PARQUET_PATH}` nor the source CSV `{CSV_PATH}` "
+                "was found. Please run the data pipeline first by executing:\n\n"
+                "`python -m src.pipeline`"
+            )
             st.stop()
 
         progress_bar = st.progress(0, text="Optimizing data for performance...")
@@ -183,7 +187,7 @@ def load_data(nrows=100000, sampling="Top N", selected_congresses=None):
             for rg in range(num_row_groups):
                 try:
                     rg_table = parquet_file.read_row_group(rg, columns=columns_to_load, use_pandas_metadata=True)
-                    rg_df = rg_table.to_pandas(dtype_backend="pyarrow")
+                    rg_df = rg_table.to_pandas()
 
                     if selected_congresses:
                         rg_df = rg_df[rg_df["congress"].isin(selected_congresses)]
@@ -206,7 +210,7 @@ def load_data(nrows=100000, sampling="Top N", selected_congresses=None):
             for rg in range(num_row_groups):
                 try:
                     rg_table = parquet_file.read_row_group(rg, columns=columns_to_load, use_pandas_metadata=True)
-                    rg_df = rg_table.to_pandas(dtype_backend="pyarrow")
+                    rg_df = rg_table.to_pandas()
 
                     if selected_congresses:
                         rg_df = rg_df[rg_df["congress"].isin(selected_congresses)]

@@ -5,6 +5,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from tqdm import tqdm
 
+from src.data import optimize_dataframe
+
 CSV_PATH = "data/sentences_enriched.csv"
 PARQUET_PATH = "data/sentences_enriched.parquet"
 CHUNK_SIZE = 250000  # Process in chunks to keep memory usage low
@@ -28,39 +30,15 @@ def convert_csv_to_parquet(progress_callback=None):
             total_rows = sum(1 for _ in f) - 1
     print(f"Total rows to process: {total_rows:,}")
 
-    # Define types to ensure consistency and minimize memory
-    dtype = {
-        "congress": "int16",
-        "chamber": "category",
-        "party": "category",
-        "match_type": "category",
-        "dem": "Int8",
-        "minority": "Int8",
-        "unified": "Int8",
-        "minuni": "Int8",
-        "freshman": "Int8",
-        "chairspeech": "Int8",
-        "rankmemspeech": "Int8",
-        "leader": "Int8",
-        "member_state": "category",
-        "state_abbrev": "category",
-        "female": "Int8",
-        "district_code": "Int8",
-        "seniority": "Int8",
-        "seniority_sq": "Int16",
-    }
-
     writer = None
 
-    # Use chunksize to keep memory usage low and constant, and parse dates at C-level
-    parse_cols = ["hearing_date"]
-    reader = pd.read_csv(CSV_PATH, chunksize=CHUNK_SIZE, dtype=dtype, parse_dates=parse_cols)
+    # Use chunksize to keep memory usage low and constant
+    reader = pd.read_csv(CSV_PATH, chunksize=CHUNK_SIZE)
 
     total_chunks = (total_rows // CHUNK_SIZE) + 1
     for i, chunk in enumerate(tqdm(reader, total=total_chunks)):
-        # Rename target_sentence to text if needed
-        if "text" not in chunk.columns and "target_sentence" in chunk.columns:
-            chunk = chunk.rename(columns={"target_sentence": "text"})
+        # Optimize chunk via shared helper
+        chunk = optimize_dataframe(chunk)
 
         # Initialize the Parquet writer with the schema of the first chunk
         table = pa.Table.from_pandas(chunk)
