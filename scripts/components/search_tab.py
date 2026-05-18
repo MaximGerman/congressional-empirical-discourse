@@ -11,7 +11,11 @@ def render_search_tab(filtered_df):
         return
 
     st.subheader("Search Transcripts & Dialogue Context")
-    search_query = st.text_input("Enter keywords (e.g., 'climate change', 'inflation', 'clean energy')", "")
+    search_query = st.text_input(
+        "Enter keywords (e.g., 'climate change', 'inflation', 'clean energy')",
+        value="",
+        key="search_query_input",
+    )
 
     # Sub-columns for advanced search filters
     col_opt1, col_opt2, col_opt3 = st.columns(3)
@@ -20,18 +24,21 @@ def render_search_tab(filtered_df):
             "Case Sensitive Search",
             value=False,
             help="If checked, matches case exactly (e.g. 'FDA' won't match 'fda').",
+            key="search_case_sensitive",
         )
     with col_opt2:
         whole_words = st.checkbox(
             "Match Whole Words Only",
             value=False,
             help="If checked, matches query on word boundaries (e.g. 'tax' won't match 'taxes').",
+            key="search_whole_words",
         )
     with col_opt3:
         use_regex = st.checkbox(
             "Use Regular Expressions",
             value=False,
             help="If checked, treats the query as a python regular expression (e.g. 'climate.*change').",
+            key="search_use_regex",
         )
 
     if search_query:
@@ -141,58 +148,19 @@ def render_search_tab(filtered_df):
                         "#2E5BFF" if party == "Democratic" else ("#FF4B4B" if party == "Republican" else "#ffc107")
                     )
 
-                    st.markdown(
-                        f"""
-                        <div style="
-                            background: rgba(22, 28, 45, 0.5);
-                            border: 1px solid rgba(255, 255, 255, 0.08);
-                            border-radius: 12px;
-                            padding: 25px;
-                            backdrop-filter: blur(12px);
-                            -webkit-backdrop-filter: blur(12px);
-                        ">
-                            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 12px; margin-bottom: 18px;">
-                                <span style="font-size: 1.15rem; font-weight: 700; color: #ffffff;">
-                                    Speaker: {speaker}
-                                    <span style="font-size: 0.9rem; font-weight: 600; color: {party_color}; margin-left: 6px;">({party})</span>
-                                </span>
-                                <span style="font-size: 0.85rem; color: rgba(255, 255, 255, 0.5); font-weight: 500;">
-                                    Hearing Date: {date_str}
-                                </span>
-                            </div>
-                            <div style="font-size: 0.8rem; color: rgba(255, 255, 255, 0.4); margin-bottom: 15px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px;">
-                                Committee: {committee}
-                            </div>
-
-                            <div style="color: rgba(255, 255, 255, 0.5); font-style: italic; margin-bottom: 15px; font-size: 0.95rem; line-height: 1.5; padding: 0 5px;">
-                                <strong style="color: rgba(255,255,255,0.7); font-style: normal; font-size: 0.8rem; text-transform: uppercase;">[Preceding Context]:</strong><br>
-                                {before_highlighted}
-                            </div>
-
-                            <div style="
-                                background: rgba(43, 92, 255, 0.12);
-                                border-left: 4px solid #2b5cff;
-                                border-radius: 6px;
-                                padding: 15px 20px;
-                                color: #ffffff;
-                                font-size: 1.05rem;
-                                font-weight: 500;
-                                margin-bottom: 15px;
-                                line-height: 1.5;
-                                box-shadow: 0 4px 15px rgba(43, 92, 255, 0.08);
-                            ">
-                                <strong style="color: #2b5cff; font-size: 0.8rem; text-transform: uppercase; font-weight: 700;">[Target Sentence]:</strong><br>
-                                {target_highlighted}
-                            </div>
-
-                            <div style="color: rgba(255, 255, 255, 0.5); font-style: italic; font-size: 0.95rem; line-height: 1.5; padding: 0 5px;">
-                                <strong style="color: rgba(255,255,255,0.7); font-style: normal; font-size: 0.8rem; text-transform: uppercase;">[Succeeding Context]:</strong><br>
-                                {after_highlighted}
-                            </div>
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
+                    html_content = (
+                        f'<div style="background: rgba(22, 28, 45, 0.5); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 12px; padding: 25px; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);">'
+                        f'<div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 12px; margin-bottom: 18px;">'
+                        f'<span style="font-size: 1.15rem; font-weight: 700; color: #ffffff;">Speaker: {speaker} <span style="font-size: 0.9rem; font-weight: 600; color: {party_color}; margin-left: 6px;">({party})</span></span>'
+                        f'<span style="font-size: 0.85rem; color: rgba(255, 255, 255, 0.5); font-weight: 500;">Hearing Date: {date_str}</span>'
+                        f"</div>"
+                        f'<div style="font-size: 0.8rem; color: rgba(255, 255, 255, 0.4); margin-bottom: 15px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px;">Committee: {committee}</div>'
+                        f'<div style="color: rgba(255, 255, 255, 0.5); font-style: italic; margin-bottom: 15px; font-size: 0.95rem; line-height: 1.5; padding: 0 5px;"><strong style="color: rgba(255,255,255,0.7); font-style: normal; font-size: 0.8rem; text-transform: uppercase;">[Preceding Context]:</strong><br>{before_highlighted}</div>'
+                        f'<div style="background: rgba(43, 92, 255, 0.12); border-left: 4px solid #2b5cff; border-radius: 6px; padding: 15px 20px; color: #ffffff; font-size: 1.05rem; font-weight: 500; margin-bottom: 15px; line-height: 1.5; box-shadow: 0 4px 15px rgba(43, 92, 255, 0.08);"><strong style="color: #2b5cff; font-size: 0.8rem; text-transform: uppercase; font-weight: 700;">[Target Sentence]:</strong><br>{target_highlighted}</div>'
+                        f'<div style="color: rgba(255, 255, 255, 0.5); font-style: italic; font-size: 0.95rem; line-height: 1.5; padding: 0 5px;"><strong style="color: rgba(255,255,255,0.7); font-style: normal; font-size: 0.8rem; text-transform: uppercase;">[Succeeding Context]:</strong><br>{after_highlighted}</div>'
+                        f"</div>"
                     )
+                    st.markdown(html_content, unsafe_allow_html=True)
                 else:
                     st.info(
                         "Click any row in the search results table above to open the dialogue flow inspector and read the surrounding context."

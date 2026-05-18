@@ -1,22 +1,35 @@
 import os
+import sys
+
+# Ensure the project root is in sys.path to resolve cross-module imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import pandas as pd
+import pyarrow.parquet as pq
 
 from scripts.optimize_data import PARQUET_PATH
 
 DICT_PATH = "docs/project/data_dictionary.md"
 
 
-def generate_summary_table(df):
+def generate_summary_table(parquet_path: str) -> pd.DataFrame:
+    parquet_file = pq.ParquetFile(parquet_path)
+    columns = parquet_file.schema.names
+    total_rows = parquet_file.metadata.num_rows
+
     stats = []
-    for col in df.columns:
-        dtype = str(df[col].dtype)
-        null_count = df[col].isnull().sum()
-        null_pct = (null_count / len(df)) * 100
-        unique_vals = df[col].nunique()
+    for col in columns:
+        # Load only this single column from the parquet file
+        col_df = pd.read_parquet(parquet_path, columns=[col])
+        series = col_df[col]
+
+        dtype = str(series.dtype)
+        null_count = series.isnull().sum()
+        null_pct = (null_count / total_rows) * 100
+        unique_vals = series.nunique()
 
         # Get a few sample values
-        sample = df[col].dropna().unique()[:3].tolist()
+        sample = series.dropna().unique()[:3].tolist()
         sample_str = ", ".join([str(x) for x in sample])
 
         stats.append(
@@ -38,8 +51,7 @@ def update_dictionary():
         return
 
     print(f"Updating data dictionary from {PARQUET_PATH}...")
-    df = pd.read_parquet(PARQUET_PATH)
-    summary_df = generate_summary_table(df)
+    summary_df = generate_summary_table(PARQUET_PATH)
 
     markdown_table = summary_df.to_markdown(index=False)
 

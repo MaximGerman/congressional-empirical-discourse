@@ -168,6 +168,7 @@ def render_insights_tab(global_stats, empirical_keywords=None, whole_words=True)
                     labels={"state_abbrev": "State Code", "sentence_count": "Sample Sentences"},
                     title="Average Empirical Discourse (%) by US State Delegation",
                 )
+                apply_dark_theme(fig_map, is_categorical=True)
                 fig_map.update_layout(
                     geo=dict(
                         bgcolor="rgba(0,0,0,0)",
@@ -176,10 +177,6 @@ def render_insights_tab(global_stats, empirical_keywords=None, whole_words=True)
                         subunitcolor="rgba(255,255,255,0.12)",
                         showlakes=True,
                     ),
-                    plot_bgcolor="rgba(0,0,0,0)",
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    font_color="#ffffff",
-                    font_family="'Outfit', sans-serif",
                     margin=dict(l=0, r=0, t=50, b=0),
                 )
                 st.plotly_chart(fig_map, use_container_width=True)
@@ -279,16 +276,9 @@ def render_insights_tab(global_stats, empirical_keywords=None, whole_words=True)
             "**Ranking Members** (the minority's lead voice), and **Regular Members**."
         )
         if "chairspeech" in sample_df.columns and "rankmemspeech" in sample_df.columns:
-
-            def determine_role(row):
-                if row.get("chairspeech") == 1:
-                    return "Committee Chair (Majority Lead)"
-                elif row.get("rankmemspeech") == 1:
-                    return "Ranking Member (Minority Lead)"
-                else:
-                    return "Regular Member"
-
-            sample_df["legislative_role"] = sample_df.apply(determine_role, axis=1)
+            sample_df["legislative_role"] = "Regular Member"
+            sample_df.loc[sample_df["chairspeech"] == 1, "legislative_role"] = "Committee Chair (Majority Lead)"
+            sample_df.loc[sample_df["rankmemspeech"] == 1, "legislative_role"] = "Ranking Member (Minority Lead)"
 
             render_proportion_chart(
                 df=sample_df,
@@ -659,16 +649,11 @@ def render_insights_tab(global_stats, empirical_keywords=None, whole_words=True)
         if "vote_pct" in sample_df.columns:
             safety_df = sample_df[sample_df["vote_pct"].notna()].copy()
             if not safety_df.empty:
-
-                def categorize_safety(vote):
-                    if vote < 55:
-                        return "Marginal (<55%)"
-                    elif vote < 65:
-                        return "Competitive (55-65%)"
-                    else:
-                        return "Safe (>65%)"
-
-                safety_df["Safety Margin"] = safety_df["vote_pct"].apply(categorize_safety)
+                safety_df["Safety Margin"] = pd.cut(
+                    safety_df["vote_pct"],
+                    bins=[-float("inf"), 55, 65, float("inf")],
+                    labels=["Marginal (<55%)", "Competitive (55-65%)", "Safe (>65%)"],
+                ).astype(str)
 
                 render_proportion_chart(
                     df=safety_df,

@@ -1,7 +1,7 @@
 import plotly.express as px
 import streamlit as st
 
-from scripts.components.utils import metric_card
+from scripts.components.utils import apply_dark_theme, metric_card
 
 
 def render_overview_tab(filtered_df):
@@ -68,11 +68,8 @@ def render_overview_tab(filtered_df):
             hole=0.4,
         )
 
+        apply_dark_theme(fig, is_categorical=True)
         fig.update_layout(
-            plot_bgcolor="rgba(0,0,0,0)",
-            paper_bgcolor="rgba(0,0,0,0)",
-            font_color="#ffffff",
-            font_family="'Outfit', sans-serif",
             margin=dict(l=20, r=20, t=40, b=20),
             legend=dict(orientation="h", yanchor="bottom", y=-0.1, xanchor="center", x=0.5),
         )
@@ -95,23 +92,10 @@ def render_overview_tab(filtered_df):
                     color_discrete_map={"Democratic": "#2E5BFF", "Republican": "#FF4B4B"},
                 )
 
+                apply_dark_theme(fig, is_categorical=False)
                 fig.update_layout(
-                    plot_bgcolor="rgba(0,0,0,0)",
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    font_color="#ffffff",
-                    font_family="'Outfit', sans-serif",
                     margin=dict(l=10, r=10, t=40, b=10),
                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-                    xaxis=dict(
-                        showgrid=True,
-                        gridcolor="rgba(255,255,255,0.06)",
-                        zeroline=True,
-                        zerolinecolor="rgba(255,255,255,0.15)",
-                    ),
-                    yaxis=dict(
-                        showgrid=True,
-                        gridcolor="rgba(255,255,255,0.06)",
-                    ),
                 )
                 st.plotly_chart(fig, use_container_width=True)
             else:

@@ -75,7 +75,7 @@ def compute_proportion_stats(
     )
 
     # Calculate standard error: sqrt(p * (1 - p) / n)
-    stats["se"] = (stats["mean"] * (1 - stats["mean"]) / stats["count"]).apply(lambda x: math.sqrt(x) if x > 0 else 0.0)
+    stats["se"] = ((stats["mean"] * (1 - stats["mean"]) / stats["count"]).clip(lower=0)) ** 0.5
     # 95% Confidence Interval limit (Z = 1.96)
     stats["ci_95"] = stats["se"] * 1.96
 
@@ -236,12 +236,12 @@ def render_statistical_report(
     """
     stats_cols_html = ""
     for label, val in stats.items():
-        stats_cols_html += f"""
-        <div>
-            <div style="font-size: 0.75rem; color: rgba(255,255,255,0.5); text-transform: uppercase;">{label}</div>
-            <div style="font-size: 1.25rem; font-weight: 700; color: #ffffff; margin-top: 3px; line-height: 1.2;">{val}</div>
-        </div>
-        """
+        stats_cols_html += (
+            f"<div>"
+            f'<div style="font-size: 0.75rem; color: rgba(255,255,255,0.5); text-transform: uppercase;">{label}</div>'
+            f'<div style="font-size: 1.25rem; font-weight: 700; color: #ffffff; margin-top: 3px; line-height: 1.2;">{val}</div>'
+            f"</div>"
+        )
 
     st.markdown(
         f"""<div class="glass-card" style="margin-top: 15px; border-left: 4px solid {border_color};">

@@ -379,6 +379,7 @@ with st.sidebar:
             options=list(keyword_presets.keys()),
             index=0,
             help="Choose a pre-defined set of research keywords or build a custom one.",
+            key="preset_library_selectbox",
         )
 
         default_keywords = keyword_presets[selected_preset]
@@ -406,14 +407,14 @@ with st.sidebar:
             "Match Whole Words Only",
             value=True,
             help="If checked, matches keywords only on exact word boundaries to avoid false positives (e.g. 'fact' matching 'factory').",
+            key="heuristics_whole_words_toggle",
         )
 
 # Pre-compute global stats for the insights tab
 global_stats = get_global_overview()
 
 # Load the data with filters
-with st.spinner("Loading dataset..."):
-    df = load_data(nrows=row_limit, sampling=sampling_mode, selected_congresses=selected_congress_load)
+df = load_data(nrows=row_limit, sampling=sampling_mode, selected_congresses=selected_congress_load)
 
 if df is None:
     if not os.path.exists(PARQUET_PATH):
@@ -429,11 +430,11 @@ st.sidebar.header("View Filters")
 
 # Party filter
 all_parties = sorted(df["party"].dropna().unique())
-selected_parties = st.sidebar.multiselect("Party", all_parties, default=all_parties)
+selected_parties = st.sidebar.multiselect("Party", all_parties, default=all_parties, key="sidebar_parties")
 
 # Committee filter
 all_committees = sorted(df["committee_name"].dropna().unique())
-selected_committees = st.sidebar.multiselect("Committee", all_committees, default=[])
+selected_committees = st.sidebar.multiselect("Committee", all_committees, default=[], key="sidebar_committees")
 
 # Apply view filters
 filtered_df = df[df["party"].isin(selected_parties)]
@@ -458,19 +459,43 @@ st.markdown(
     f"Currently viewing **{len(filtered_df):,}** sentences from a **{len(df):,}** row sample (Total dataset: **{total_rows:,}** rows)."
 )
 
-# Main Tabs
-tabs = st.tabs(["Overview", "Transcript Search", "Matching Diagnostics", "Data Science & Insights"])
+# Main Navigation - Stateful Horizontal Selector (100% immune to resets, highly performant)
+if "active_tab" not in st.session_state:
+    st.session_state.active_tab = "Overview"
 
-with tabs[0]:
+# Create a modern segmented tab selector using st.segmented_control if available, or horizontal radio
+tabs_list = ["Overview", "Transcript Search", "Matching Diagnostics", "Data Science & Insights"]
+try:
+    active_tab = st.segmented_control(
+        "Select Tab",
+        options=tabs_list,
+        default=st.session_state.active_tab,
+        label_visibility="collapsed",
+        key="active_tab_segmented",
+    )
+    if active_tab is None:
+        active_tab = st.session_state.active_tab
+except AttributeError:
+    # Fallback to horizontal radio for backward compatibility
+    active_tab = st.radio(
+        "Select Tab",
+        options=tabs_list,
+        index=tabs_list.index(st.session_state.active_tab),
+        horizontal=True,
+        label_visibility="collapsed",
+        key="active_tab_radio",
+    )
+
+st.session_state.active_tab = active_tab
+
+# Render only the selected tab conditionally (speeds up search and prevents resetting)
+if active_tab == "Overview":
     render_overview_tab(filtered_df)
-
-with tabs[1]:
+elif active_tab == "Transcript Search":
     render_search_tab(filtered_df)
-
-with tabs[2]:
+elif active_tab == "Matching Diagnostics":
     render_diagnostics_tab(filtered_df)
-
-with tabs[3]:
+elif active_tab == "Data Science & Insights":
     render_insights_tab(global_stats, empirical_keywords=empirical_keywords, whole_words=whole_words_toggle)
 
 # Footer
