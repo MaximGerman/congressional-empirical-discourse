@@ -131,7 +131,10 @@ def highlight_search_terms(
             try:
                 escaped = re.escape(t)
                 if whole_words:
-                    escaped = rf"\b{escaped}\b"
+                    # Smart boundary: Only append \b if the boundary edge is a word character
+                    start_b = r"\b" if re.match(r"^\w", t) else ""
+                    end_b = r"\b" if re.search(r"\w$", t) else ""
+                    escaped = f"{start_b}{escaped}{end_b}"
                 escaped_terms.append(escaped)
             except Exception:
                 continue
@@ -174,11 +177,16 @@ def classify_empirical_discourse(df: pd.DataFrame, keywords: list[str], whole_wo
         df["is_empirical_proxy"] = False
         return df
 
-    escaped_kws = [re.escape(kw) for kw in keywords]
-    if whole_words:
-        pattern = "|".join(rf"\b{kw}\b" for kw in escaped_kws)
-    else:
-        pattern = "|".join(escaped_kws)
+    escaped_kws = []
+    for kw in keywords:
+        escaped = re.escape(kw)
+        if whole_words:
+            # Smart boundary: Only append \b if the boundary edge is a word character
+            start_b = r"\b" if re.match(r"^\w", kw) else ""
+            end_b = r"\b" if re.search(r"\w$", kw) else ""
+            escaped = f"{start_b}{escaped}{end_b}"
+        escaped_kws.append(escaped)
+    pattern = "|".join(escaped_kws)
 
     df["is_empirical_proxy"] = df["text"].str.contains(pattern, case=False, na=False)
     return df
@@ -341,7 +349,7 @@ def render_proportion_chart(
             kwargs["orientation"] = "v"
             fig = px.bar(stats, x=x, y=y, barmode=barmode, **kwargs)
 
-        apply_dark_theme(fig, is_categorical=(color_continuous_scale is None))
+        apply_dark_theme(fig, is_categorical=False)
     elif chart_type == "line":
         kwargs["error_y"] = error_y
         kwargs["markers"] = True

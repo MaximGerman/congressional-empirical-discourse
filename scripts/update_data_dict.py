@@ -17,19 +17,51 @@ def generate_summary_table(parquet_path: str) -> pd.DataFrame:
     columns = parquet_file.schema.names
     total_rows = parquet_file.metadata.num_rows
 
+    heavy_cols = {"text", "target_sentence", "context_before", "context_after"}
+    small_cols = [col for col in columns if col not in heavy_cols]
+
+    # Read all small columns in a single optimized batch
+    if small_cols:
+        small_df = pd.read_parquet(parquet_path, columns=small_cols)
+    else:
+        small_df = pd.DataFrame()
+
     stats = []
-    for col in columns:
-        # Load only this single column from the parquet file
-        col_df = pd.read_parquet(parquet_path, columns=[col])
-        series = col_df[col]
+    for col_idx, col in enumerate(columns):
+        if col in small_df.columns:
+            series = small_df[col]
+            dtype = str(series.dtype)
+            null_count = int(series.isnull().sum())
+            unique_vals = int(series.nunique())
+            sample = series.dropna().unique()[:3].tolist()
+        else:
+            # For heavy text columns, fetch stats from metadata and slice for samples
+            arrow_field = parquet_file.schema.to_arrow_schema().field(col)
+            dtype = str(arrow_field.type)
 
-        dtype = str(series.dtype)
-        null_count = series.isnull().sum()
+            null_count = 0
+            has_stats = True
+            for rg in range(parquet_file.num_row_groups):
+                col_meta = parquet_file.metadata.row_group(rg).column(col_idx)
+                if col_meta.statistics and col_meta.statistics.null_count is not None:
+                    null_count += col_meta.statistics.null_count
+                else:
+                    has_stats = False
+                    break
+
+            if not has_stats:
+                sample_table = parquet_file.read_row_group(0, columns=[col])
+                sample_series = sample_table.to_pandas()[col]
+                null_count = int(sample_series.isnull().sum() * (total_rows / len(sample_series)))
+
+            # Load only the first row group for sample preview
+            sample_table = parquet_file.read_row_group(0, columns=[col])
+            sample_series = sample_table.to_pandas()[col]
+
+            unique_vals = total_rows - null_count
+            sample = sample_series.dropna().unique()[:3].tolist()
+
         null_pct = (null_count / total_rows) * 100
-        unique_vals = series.nunique()
-
-        # Get a few sample values
-        sample = series.dropna().unique()[:3].tolist()
         sample_str = ", ".join([str(x) for x in sample])
 
         stats.append(
@@ -50,6 +82,18 @@ def update_dictionary():
         print(f"Skipping update: {PARQUET_PATH} not found.")
         return
 
+    marker = "## Automated Schema Summary"
+
+    # Shortcut: If data_dictionary.md is newer than the Parquet file, skip execution
+    if os.path.exists(DICT_PATH):
+        pq_mtime = os.path.getmtime(PARQUET_PATH)
+        dict_mtime = os.path.getmtime(DICT_PATH)
+        if dict_mtime >= pq_mtime:
+            with open(DICT_PATH, encoding="utf-8") as f:
+                if marker in f.read():
+                    print("Data dictionary is already up-to-date with parquet file. Skipping update.")
+                    return
+
     print(f"Updating data dictionary from {PARQUET_PATH}...")
     summary_df = generate_summary_table(PARQUET_PATH)
 
@@ -57,8 +101,6 @@ def update_dictionary():
 
     with open(DICT_PATH, encoding="utf-8") as f:
         content = f.read()
-
-    marker = "## Automated Schema Summary"
 
     # Check if the table content actually changed before writing
     # We compare the table part specifically to avoid timestamp-only updates

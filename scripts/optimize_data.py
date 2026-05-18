@@ -19,8 +19,13 @@ def convert_csv_to_parquet(progress_callback=None):
 
     # Estimate total rows for progress bar
     print("Estimating file size...")
-    with open(CSV_PATH, encoding="utf-8") as f:
-        total_rows = sum(1 for _ in f) - 1
+    try:
+        with open(CSV_PATH, "rb") as f:
+            total_rows = sum(chunk.count(b"\n") for chunk in iter(lambda: f.read(1024 * 1024), b"")) - 1
+    except Exception:
+        # Fallback to slower line counting if needed
+        with open(CSV_PATH, encoding="utf-8") as f:
+            total_rows = sum(1 for _ in f) - 1
     print(f"Total rows to process: {total_rows:,}")
 
     # Define types to ensure consistency and minimize memory

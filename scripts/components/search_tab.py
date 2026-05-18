@@ -60,7 +60,10 @@ def render_search_tab(filtered_df):
                 ]
             else:
                 if whole_words:
-                    pattern = rf"\b{re.escape(search_query)}\b"
+                    # Smart boundary: Only append \b if the boundary edge is a word character
+                    start_b = r"\b" if re.match(r"^\w", search_query) else ""
+                    end_b = r"\b" if re.search(r"\w$", search_query) else ""
+                    pattern = f"{start_b}{re.escape(search_query)}{end_b}"
                     search_results = filtered_df[
                         filtered_df["text"].str.contains(pattern, case=case_sensitive, regex=True, na=False)
                     ]
@@ -78,11 +81,21 @@ def render_search_tab(filtered_df):
                 cols_to_show = [c for c in display_cols if c in search_results.columns]
 
                 st.markdown("### Sentence Explorer")
-                st.caption("Tip: Select a row in the table below to inspect its surrounding dialogue context.")
+
+                # Limit the displayed rows in the interactive table to avoid browser lag
+                max_display = 1000
+                display_df = search_results[cols_to_show]
+                if len(display_df) > max_display:
+                    st.warning(
+                        f"Showing the first {max_display:,} matching sentences to maintain dashboard performance."
+                    )
+                    display_df = display_df.head(max_display)
+                else:
+                    st.caption("Tip: Select a row in the table below to inspect its surrounding dialogue context.")
 
                 # Interactive selection dataframe
                 event = st.dataframe(
-                    search_results[cols_to_show],
+                    display_df,
                     use_container_width=True,
                     on_select="rerun",
                     selection_mode="single-row",
