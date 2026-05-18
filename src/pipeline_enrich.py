@@ -1,4 +1,5 @@
 import logging
+import os
 
 import pandas as pd
 from tqdm import tqdm
@@ -55,6 +56,12 @@ def _vectorized_merge_match(pairs_df, matchable_df, left_name_col, match_type_la
             left_on=[left_name_col, "speaker_last_word"],
             right_on=[left_name_col, "last_name_upper"],
             how="left",
+        )
+        # Guard: merge must stay 1:1; if duplicates crept through, skip rather than misalign
+        assert len(fallback_matched) == fallback_mask.sum(), (
+            f"_vectorized_merge_match fallback produced {len(fallback_matched)} rows "
+            f"but expected {fallback_mask.sum()}. Check that matchable_df is deduplicated "
+            f"on [{left_name_col}, last_name_upper] before calling this function."
         )
         for col in ["bioguide_id", "last_name", "first_name", "party", "state"]:
             if col in fallback_matched.columns:
@@ -172,9 +179,7 @@ def _match_speakers_to_members(legislators_df, new_era):
     member_lookup_hm = build_member_lookup_from_hearing_members(hearing_members, members_df, new_era)
 
     # --- Gap 3 Remediation: Augment with Voteview (HSall_members.csv) ---
-    import os
-
-    vv_path = "data/external/HSall_members.csv"
+    vv_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "external", "HSall_members.csv")
     if os.path.exists(vv_path):
         vv = pd.read_csv(vv_path)
         vv_house = vv[(vv["chamber"] == "House") & (vv["congress"].isin([115, 116, 117, 118]))].copy()
@@ -293,7 +298,15 @@ def _match_speakers_to_members(legislators_df, new_era):
             ]:
                 matched.at[idx, col] = val
 
-    # Merge match results back into legislators_df
+    # Merge match results back into legislators_df.
+    # NaN != NaN in pandas merge keys, so hearings with no committee assignment would silently
+    # lose all matches. Use a sentinel to make NaN committee_codes mergeable.
+    _SENTINEL = "__NO_COMMITTEE__"
+    legislators_df = legislators_df.copy()
+    legislators_df["committee_code"] = legislators_df["committee_code"].fillna(_SENTINEL)
+    matched = matched.copy()
+    matched["committee_code"] = matched["committee_code"].fillna(_SENTINEL)
+
     legislators_df = legislators_df.merge(
         matched[
             [
@@ -311,6 +324,8 @@ def _match_speakers_to_members(legislators_df, new_era):
         on=["hearing_id", "speaker_last_name", "committee_code"],
         how="left",
     )
+    # Restore NaN for the sentinel
+    legislators_df["committee_code"] = legislators_df["committee_code"].replace(_SENTINEL, pd.NA)
 
     # --- Post-match witness filtering ---
     pre_filter_count = len(legislators_df)

@@ -57,6 +57,21 @@ Table of contents .... 5
     assert chunks[1]["text"] == "Goodbye."
 
 
+def test_segment_speakers_three_word_name():
+    """Three-word compound names (e.g., De La Cruz) must be captured after the regex fix."""
+    text = "    Representative De La Cruz. Thank you, Mr. Chairman.\n"
+    chunks = segment_speakers(text)
+    assert len(chunks) == 1
+    assert chunks[0]["speaker"] == "Representative De La Cruz"
+
+
+def test_segment_speakers_three_word_name_van_de():
+    text = "    Mr. Van De Putte. I yield my time.\n"
+    chunks = segment_speakers(text)
+    assert len(chunks) == 1
+    assert chunks[0]["speaker"] == "Mr. Van De Putte"
+
+
 def test_extract_name_parts_single_word():
     full, last = extract_name_parts("Mr. SMITH")
     assert full == "SMITH"
@@ -73,6 +88,12 @@ def test_extract_name_parts_van_prefix():
     full, last = extract_name_parts("Mr. Van Orden")
     assert full == "VAN ORDEN"
     assert last == "ORDEN"
+
+
+def test_extract_name_parts_three_word():
+    full, last = extract_name_parts("Representative De La Cruz")
+    assert full == "DE LA CRUZ"
+    assert last == "CRUZ"
 
 
 def test_extract_name_parts_chair():

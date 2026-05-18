@@ -156,13 +156,15 @@ def step5_create_sample(legislators_df, sample_size=10000, seed=42):
             n = min(len(congress_data), per_congress)
             parts.append(congress_data.sample(n, random_state=seed))
 
-        sample = pd.concat(parts, ignore_index=True)
+        sample = pd.concat(parts)  # keep original indices so the top-up isin() check is correct
 
         # Top up if we didn't hit the target
         if len(sample) < sample_size:
             remaining = matched[~matched.index.isin(sample.index)]
             extra = remaining.sample(min(len(remaining), sample_size - len(sample)), random_state=seed)
-            sample = pd.concat([sample, extra], ignore_index=True)
+            sample = pd.concat([sample, extra])
+
+        sample = sample.reset_index(drop=True)
 
     logger.info("Sample size: %d", len(sample))
     logger.info("Congress distribution:\n%s", sample["congress"].value_counts().sort_index().to_string())

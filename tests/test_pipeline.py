@@ -141,3 +141,38 @@ class TestStep5CreateSample:
         sample = step5_create_sample(df, sample_size=100, seed=42)
         assert len(sample) == 1
         assert sample.iloc[0]["bioguide_id"] == "X001"
+
+    def test_topup_no_duplicates(self):
+        """When congresses have unequal sizes the top-up must not introduce duplicate rows."""
+        # Congress 115 has 5 rows, 116 has 100 rows
+        # sample_size=20 -> per_congress=10 -> 115 contributes 5, 116 contributes 10 -> 15 total
+        # top-up fires and should draw 5 more from 116, with no repeats
+        rows = []
+        for i in range(5):
+            rows.append(
+                {
+                    "hearing_id": i,
+                    "speaker": f"Mr. A{i}",
+                    "target_sentence": f"s{i}",
+                    "congress": 115,
+                    "party": "Republican",
+                    "bioguide_id": f"A{i:03d}",
+                    "minority": 0,
+                }
+            )
+        for i in range(100):
+            rows.append(
+                {
+                    "hearing_id": 100 + i,
+                    "speaker": f"Mr. B{i}",
+                    "target_sentence": f"t{i}",
+                    "congress": 116,
+                    "party": "Democratic",
+                    "bioguide_id": f"B{i:03d}",
+                    "minority": 1,
+                }
+            )
+        df = pd.DataFrame(rows)
+        sample = step5_create_sample(df, sample_size=20, seed=42)
+        assert len(sample) == 20
+        assert sample["bioguide_id"].nunique() == 20, "Top-up introduced duplicate rows"

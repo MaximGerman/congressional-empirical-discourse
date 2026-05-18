@@ -94,6 +94,14 @@ def load_elections_data(path=None, target_congresses=None):
 
     # Calculate vote percentage for each candidate
     # Handle cases where totalvotes might be 0 to avoid division by zero
+    n_zero_totalvotes = (df["totalvotes"] == 0).sum()
+    if n_zero_totalvotes > 0:
+        logger.warning(
+            "%d rows have totalvotes=0 (%.1f%% of filtered rows) — treated as 100%% unopposed. "
+            "Verify these are genuinely uncontested races, not missing data.",
+            n_zero_totalvotes,
+            n_zero_totalvotes / len(df) * 100 if len(df) > 0 else 0,
+        )
     df["vote_pct"] = (df["candidatevotes"] / df["totalvotes"].replace(0, pd.NA)) * 100
     pd.set_option("future.no_silent_downcasting", True)
     df["vote_pct"] = df["vote_pct"].fillna(100.0).infer_objects()  # Unopposed where totalvotes == 0

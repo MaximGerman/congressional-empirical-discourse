@@ -19,7 +19,7 @@ SPEAKER_PATTERN = re.compile(
     r"^\s{2,}((?:Mr|Mrs|Ms|Dr|Chairman|Chairwoman|Chairperson|"
     r"Senator|Representative|General|Admiral|Secretary|Judge|"
     r"Ambassador|Governor|Mayor|Professor|Reverend|Father)"
-    r"\.?\s+[A-Z][A-Za-z\'\-]+(?:\s+[A-Za-z\'\-]+)?)\."
+    r"\.?\s+[A-Z][A-Za-z\'\-]+(?:\s+[A-Za-z\'\-]+)*)\."
 )
 
 # Pattern for "The Chairman." / "The Chairwoman." without a last name
