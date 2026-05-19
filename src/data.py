@@ -113,7 +113,9 @@ def resolve_hearing_dates(hearings_dates, hearings_df):
         mask = (df["congress"] == congress) & (df["hearing_date"] >= start) & (df["hearing_date"] < end)
         in_range = in_range | mask
 
-    # For each hearing, prefer in-range dates; fall back to latest date if none in range
+    # For multi-day hearings, pick the earliest in-range date (hearing start date).
+    # This is a deliberate choice: the first session is when most opening statements
+    # and substantive testimony occur.
     valid = df[in_range].sort_values("hearing_date").drop_duplicates(subset="hearing_id", keep="first")
 
     total_hearings = df["hearing_id"].nunique()

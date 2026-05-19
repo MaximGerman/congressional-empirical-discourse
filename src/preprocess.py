@@ -75,6 +75,10 @@ def segment_speakers(transcript_text):
     return chunks
 
 
+# Minimum character length for a sentence to be included. Shorter strings are
+# likely parsing artifacts (e.g., stray punctuation, line-break remnants).
+MIN_SENTENCE_LENGTH = 5
+
 TITLE_WORDS = {
     "MR",
     "MR.",
@@ -161,7 +165,7 @@ def create_sentence_records(speech_chunks, hearing_id):
         sentences = sent_tokenize(text)
         for i, sent in enumerate(sentences):
             # Skip very short sentences (likely parsing artifacts)
-            if len(sent.strip()) < 5:
+            if len(sent.strip()) < MIN_SENTENCE_LENGTH:
                 continue
             full_name, last_word = extract_name_parts(chunk["speaker"])
             record = {
