@@ -43,6 +43,11 @@ def _vectorized_merge_match(pairs_df, matchable_df, left_name_col, match_type_la
         how="left",
         suffixes=("", "_full"),
     )
+    assert len(retVal) == len(pairs_df), (
+        f"_vectorized_merge_match primary merge produced {len(retVal)} rows "
+        f"but expected {len(pairs_df)}. Check that matchable_df is deduplicated "
+        f"on [{left_name_col}, last_name_upper] before calling this function."
+    )
 
     # Second pass: for unmatched multi-word names, try speaker_last_word
     unmatched = retVal["bioguide_id"].isna()
@@ -225,7 +230,10 @@ def _match_speakers_to_members(legislators_df, new_era):
     chair_lookup = leaders_df[leaders_df["role"] == "chair"][["congress", "thomas_id", "bioguide_id"]].copy()
     chair_lookup = chair_lookup.drop_duplicates(subset=["congress", "thomas_id"], keep="first")
 
-    is_anon_chair = matched["speaker_last_name"].isin({"CHAIRMAN", "CHAIRWOMAN", "CHAIRPERSON"})
+    is_anon_chair = (
+        matched["speaker_last_name"].isin({"CHAIRMAN", "CHAIRWOMAN", "CHAIRPERSON"})
+        & matched["bioguide_id"].isna()  # Only resolve unmatched chairs
+    )
     if is_anon_chair.any():
         matched.loc[is_anon_chair, "_thomas_id"] = matched.loc[is_anon_chair, "committee_code"].apply(
             normalize_committee_code

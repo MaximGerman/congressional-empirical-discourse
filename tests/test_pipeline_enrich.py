@@ -306,3 +306,25 @@ def test_match_speakers_multi_chair_edge_case(monkeypatch):
     assert len(result) == 1
     # Assert we picked the first chair
     assert result.iloc[0]["bioguide_id"] == "C001"
+
+
+def test_vectorized_merge_match_asserts_no_row_explosion():
+    """Primary merge must raise AssertionError when matchable_df has duplicate (group, name) rows."""
+    pairs_df = pd.DataFrame(
+        {
+            "group_id": [1, 2],
+            "speaker_last_name": ["SMITH", "JONES"],
+            "speaker_last_word": ["SMITH", "JONES"],
+        }
+    )
+    # matchable_df has two SMITH rows for group_id=1 — a many-to-many join would duplicate pair rows
+    matchable_df = pd.DataFrame(
+        {
+            "group_id": [1, 1, 2],
+            "last_name_upper": ["SMITH", "SMITH", "JONES"],
+            "bioguide_id": ["S001", "S002", "J001"],
+        }
+    )
+
+    with pytest.raises(AssertionError, match="_vectorized_merge_match primary merge produced"):
+        _vectorized_merge_match(pairs_df, matchable_df, "group_id", "test_match")
