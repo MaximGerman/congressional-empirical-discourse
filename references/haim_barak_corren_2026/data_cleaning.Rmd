@@ -1,0 +1,431 @@
+---
+title: "data_cleaning"
+author: "Amit Haim"
+date: '2024-04-25'
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+path = "C:/Users/USER/Documents/empirical_evidence_corren"
+
+# Set the working directory for the whole document
+# knitr::opts_knit$set(root.dir = path)
+knitr::opts_knit$set(root.dir = here::here(path))
+```
+
+```{r include=FALSE}
+library(ggplot2)
+library(dplyr)
+library(broom)
+library(ggpubr)
+library(tidyr)
+library(gtable)
+library(grid) # for unit.pmax()
+library(gridExtra)
+library(lubridate)
+library(stargazer)
+library(vtable)
+library(stringr)
+library(lmtest)
+library(sandwich)
+library(purrr)
+library("readxl")
+library(here)
+library(haven)
+
+```
+
+```{r include=FALSE}
+speech_file <- paste(here(),"replication files", "Replication_HearingText", "Data_speech.Rdata",sep = '/')
+
+load(speech_file)
+
+df_speech <- speech
+
+hearings_file <- paste(here(),"replication files", "APSR_replication_files", "hearings_apsr.dta",sep = '/')
+
+hearings_data <- read_dta(hearings_file)
+hearings_data <- hearings_data %>%
+  filter(congress >= 105) %>%
+  filter(congress <= 114)
+
+
+head(hearings_data)
+
+head(df_speech)
+```
+
+
+
+
+```{r include=FALSE}
+# Normalize case and trim whitespace
+df_speech <- df_speech %>%
+  mutate(title = tolower(trimws(title)))
+
+hearings_data <- hearings_data %>%
+  mutate(title = tolower(trimws(title)))
+
+
+# Step 1: Extract the first few words (e.g., first 2 words) and convert to lowercase
+extract_first_words <- function(title, num_words) {
+  title %>%
+    str_to_lower() %>%    # Convert to lowercase
+    str_trim() %>%        # Trim whitespace
+    { ifelse(str_count(., "\\S+") < num_words, ., word(., 1, num_words)) } # Extract words safely
+}
+
+df_speech <- df_speech %>%
+  mutate(first_words = extract_first_words(title, 6))  # Extract first 2 words
+
+hearings_data <- hearings_data %>%
+  mutate(first_words = extract_first_words(title, 6))  # Extract first 2 words
+
+# Step 2: Create a combined key for matching
+df_speech <- df_speech %>%
+  mutate(match_key = paste(first_words, congress, committee_code2, sep = "_"))
+
+hearings_data <- hearings_data %>%
+  mutate(match_key = paste(first_words, congress, cmt_thomas_id, sep = "_"))
+
+# Step 3: Perform the join using the combined key
+result_df <- df_speech %>%
+  left_join(hearings_data, by = "match_key", suffix = c("_speech", "_hearings"))
+
+# View the result
+
+result_df <- result_df %>%
+  distinct(speech, .keep_all = TRUE)
+
+
+# add metadata of constitutional classification
+df_freq_con <- read.csv(paste(path,"data", "df_freq_con.csv",sep = '/'))
+
+
+result_df$hearing <- sub("\\.txt$", "", result_df$file_name)
+
+result_df <- result_df %>%
+  left_join(df_freq_con, by = "hearing")
+
+
+write.csv(result_df, paste(path,"data", "merged_metadata_df.csv",sep = '/'), row.names = FALSE)
+
+```
+
+
+
+
+## add hearing type variable
+```{r include=FALSE}
+
+PAP_df <- read.csv(paste(path,"data", "US-Legislative_congressional_hearings-21.7.csv",sep = '/'))
+
+PAP_df <- PAP_df %>%
+  filter(Congress >= 105) %>%
+  filter(Congress <= 114)
+
+oversight_words <- c("oversight","review","report","budget request","control","impact","information","investigation","request","explanation","president","administration","contract","consultation","examination")
+
+
+# Create a regex pattern to search for the oversight words
+pattern <- paste(oversight_words, collapse = "|")  # Join words with OR operator "|"
+
+# Create the 'type' variable
+PAP_df$type <- ifelse(grepl(pattern, PAP_df$description, ignore.case = TRUE), "oversight", "legislative")
+
+PAP_df <- PAP_df %>%
+  mutate(title = tolower(trimws(title)))
+
+
+# Step 1: Extract the first few words (e.g., first 2 words) and convert to lowercase
+extract_first_words <- function(title, num_words) {
+  title %>%
+    str_to_lower() %>%    # Convert to lowercase
+    str_trim() %>%        # Trim whitespace
+    { ifelse(str_count(., "\\S+") < num_words, ., word(., 1, num_words)) } # Extract words safely
+}
+
+PAP_df <- PAP_df %>%
+  mutate(first_words = extract_first_words(title, 3))  # Extract first 6 words
+
+PAP_df <- PAP_df %>%
+  mutate(match_key = paste(Congress,first_words, sep = "_"))
+
+
+PAP_df <- PAP_df %>%
+  select(match_key,description,type)
+
+
+merged_metadata_df <- read.csv(paste(path,"data", "merged_metadata_df.csv",sep = '/'))
+
+
+merged_metadata_df <- merged_metadata_df %>%
+  mutate(first_words = extract_first_words(title_hearings, 3))  # Extract first 6 words
+
+
+merged_metadata_df <- merged_metadata_df %>%
+  mutate(match_key = paste(congress_hearings,first_words, sep = "_"))
+
+
+#Perform the join using the combined key
+merged_metadata_df <- merged_metadata_df %>%
+  left_join(PAP_df, by = "match_key", suffix = c("_PAP", "_metadata"))
+
+
+write.csv(result_df, paste(path,"data", "merged_metadata_df.csv",sep = '/'), row.names = FALSE)
+
+```
+
+# merge predicted df with metadata
+```{r include=FALSE}
+merged_metadata_df <- read.csv(paste(path,"data", "merged_metadata_df.csv",sep = '/'))
+
+library(reticulate)
+use_python("C:/Users/mitha/anaconda3/python.exe", required = TRUE)
+
+
+# Use reticulate to import Python libraries
+pickle <- import("pickle")
+
+pkl_file <- paste(path,"data", "merged_hearings_roberta_predict.pkl",sep = "/")
+
+df <- pickle$load(import("builtins")$open(pkl_file, "rb"))
+
+
+df$hearing <- sub("\\.txt$", "", df$file_name)
+
+
+# calculate empirical score
+aggregated <- df %>%
+  group_by(speech) %>%
+  summarise(
+    mean_score = mean(predictions, na.rm = TRUE),
+    variance_score = var(predictions, na.rm = TRUE)
+#    .groups = "drop"  # Avoid grouped DataFrame
+  )
+
+
+aggregated <- aggregated %>%
+  left_join(merged_metadata_df,by="speech")
+
+df <-aggregated
+
+```
+
+
+
+```{r include=FALSE}
+df <- df %>%
+  group_by(hearing) %>%
+  mutate(across(
+    starts_with("average_freq_ver"),
+    ~ as.integer(mean(. > 0, na.rm = TRUE) > 0),
+    .names = "class_const_{col}"
+  )) %>%
+  rename_with(~ gsub("average_freq_ver", "class_const_", .), starts_with("class_const")) %>%
+  ungroup() %>%
+  rename_with(
+    ~ gsub("class_const_class_const_", "class_const_", .), 
+    starts_with("class_const_class_const_")
+  )
+
+df <- df %>%
+    mutate(
+    cmt_govtrack = gsub("HOUSE COMMITTEE ON ", "", cmt_govtrack, fixed = TRUE),
+    cmt_govtrack = tools::toTitleCase(tolower(cmt_govtrack))
+  ) %>% 
+  mutate(type_legislative = case_when(
+    type == "legislative" ~ 1,
+    type == "oversight" ~ 0,
+    TRUE ~ NA_real_
+  ))
+
+
+
+df <- df %>%
+  mutate(
+    majority_party = case_when(
+      year_hearings >= 1996 & year_hearings <= 2006 ~ "R",
+      year_hearings >= 2007 & year_hearings <= 2010 ~ "D",
+      year_hearings >= 2011 & year_hearings <= 2016 ~ "R",
+      TRUE ~ NA_character_  # Handle years outside this range
+    )
+  )
+
+
+
+# save the working df as Rdata
+save(df, file=paste(path,"data", "df_withempirical.RData",sep = '/'))
+```
+
+
+
+
+```{r include=FALSE}
+library(httr)
+library(purrr)
+library(dplyr)
+library(tibble)
+library(readr)
+library(stringr)
+
+api_key <- "u9B8x7eCnRqZMd2pm0pfUSw7LDATCpveLDIzTJdN"
+
+
+
+
+
+
+`%||%` <- function(x, y) if (is.null(x)) y else x
+
+as_row <- function(x) {
+  tibble(
+    packageId    = pluck(x, "packageId", .default = NA_character_),
+    title        = pluck(x, "title", .default = NA_character_),
+    congress     = suppressWarnings(as.integer(pluck(x, "congress", .default = NA_character_))),
+    dateIssued   = pluck(x, "dateIssued", .default = NA_character_),
+    chamber      = pluck(x, "chamber", .default = NA_character_),
+    docClass     = pluck(x, "docClass", .default = NA_character_),
+    lastModified = pluck(x, "lastModified", .default = NA_character_)
+  )
+}
+
+# Exponential backoff + jitter; retries 429 and 5xx
+get_page <- function(url, query, max_tries = 12) {
+  for (i in seq_len(max_tries)) {
+    resp <- GET(url, query = query)
+    sc <- status_code(resp)
+
+    if (sc == 200) {
+      return(content(resp, as = "parsed", type = "application/json"))
+    }
+
+    if (sc == 429 || (sc >= 500 && sc < 600)) {
+      # exponential backoff with jitter
+      base_wait <- min(300, 2^(i - 1))     # cap at 5 minutes
+      jitter <- runif(1, 0, 1)
+      wait <- base_wait + jitter
+
+      message("HTTP ", sc, " (try ", i, "/", max_tries, "). Sleeping ", round(wait, 1), "s then retrying...")
+      Sys.sleep(wait)
+      next
+    }
+
+    # non-retryable
+    stop_for_status(resp)
+  }
+
+  stop("Failed after ", max_tries, " tries. Last status: ", sc)
+}
+
+# Fetch ALL pages for a (congress, year) slice.
+fetch_slice <- function(cong, year,
+                        page_size = 1000,
+                        throttle_seconds = 0.8) {
+
+  url <- sprintf("https://api.govinfo.gov/published/%d-01-01/%d-12-31", year, year)
+
+  offset <- "*"
+  out <- list()
+  page <- 1
+
+  repeat {
+    message("Congress ", cong, " | Year ", year, " | page ", page, " | offsetMark=", offset)
+
+    query <- list(
+      offsetMark = offset,
+      pageSize   = page_size,
+      collection = "CHRG",
+      docClass   = "HHRG",
+      congress   = as.character(cong),
+      api_key    = api_key
+    )
+
+    dat <- get_page(url, query)
+
+    pkgs <- dat$packages %||% list()
+    out <- c(out, pkgs)
+
+    next_off <- dat$nextPage %||% ""
+    if (!nzchar(next_off)) break
+
+    offset <- next_off
+    page <- page + 1
+
+    Sys.sleep(throttle_seconds)
+  }
+
+  map_dfr(out, as_row) %>%
+    mutate(slice_year = year) %>%
+    distinct(packageId, .keep_all = TRUE)
+}
+
+# ---- Driver: loop congresses and years, checkpoint each successful slice ----
+
+out_dir <- "govinfo_house_hearings_slices"
+dir.create(out_dir, showWarnings = FALSE)
+
+congress_years <- tibble(
+  congress = 105:114,
+  start_year = c(1997,1999,2001,2003,2005,2007,2009,2011,2013,2015),
+  end_year   = c(1998,2000,2002,2004,2006,2008,2010,2012,2014,2016)
+) %>%
+  rowwise() %>%
+  mutate(year = list(seq(start_year, end_year))) %>%
+  ungroup() %>%
+  tidyr::unnest(year) %>%
+  select(congress, year)
+
+failed <- list()
+
+for (i in seq_len(nrow(congress_years))) {
+  cong <- congress_years$congress[i]
+  yr   <- congress_years$year[i]
+
+  outfile <- file.path(out_dir, sprintf("HHRG_cong%03d_%d.csv", cong, yr))
+
+  # Skip if already downloaded (resume-friendly)
+  if (file.exists(outfile)) next
+
+  res <- tryCatch(
+    {
+      df_slice <- fetch_slice(cong, yr)
+
+      # Always write, even if 0 rows (so we know it completed)
+      write_csv(df_slice, outfile)
+      message("Saved: ", outfile, " (rows=", nrow(df_slice), ")")
+      TRUE
+    },
+    error = function(e) {
+      message("FAILED slice cong=", cong, " year=", yr, " : ", conditionMessage(e))
+      failed[[length(failed) + 1]] <<- tibble(congress = cong, year = yr, error = conditionMessage(e))
+      FALSE
+    }
+  )
+}
+
+failed_tbl <- bind_rows(failed)
+failed_tbl
+# write_csv(failed_tbl, file.path(out_dir, "failed_slices.csv"))
+
+# ---- Combine all completed slices; dedup by packageId globally ----
+
+files <- list.files(out_dir, pattern = "^HHRG_cong\\d+_\\d{4}\\.csv$", full.names = TRUE)
+
+hearings_all <- files %>%
+  set_names() %>%
+  map_dfr(read_csv, show_col_types = FALSE) %>%
+  distinct(packageId, .keep_all = TRUE)
+
+# ---- No duplicates guarantee ----
+stopifnot(anyDuplicated(hearings_all$packageId) == 0)
+
+hearings_all
+
+
+
+  ```
+

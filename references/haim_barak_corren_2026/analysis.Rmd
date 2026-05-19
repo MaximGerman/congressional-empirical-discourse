@@ -1,0 +1,2732 @@
+---
+title: "analysis"
+output: html_document
+date: "2024-12-27"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+path = "C:/Users/USER/Documents/empirical_evidence_corren"
+
+# Set the working directory for the whole document
+# knitr::opts_knit$set(root.dir = path)
+knitr::opts_knit$set(root.dir = here::here(path))
+```
+
+```{r include=FALSE}
+library(ggplot2)
+library(dplyr)
+library(broom)
+library(ggpubr)
+library(tidyr)
+library(gtable)
+library(grid) # for unit.pmax()
+library(gridExtra)
+library(lubridate)
+library(stargazer)
+library(vtable)
+library(stringr)
+library(lmtest)
+library(sandwich)
+library(purrr)
+library("readxl")
+library(here)
+library(haven)
+library(scales)
+library(fst)
+library(data.table)
+
+```
+
+
+```{r include=FALSE}
+
+load(file=paste(here(),"data", "df_withempirical.RData",sep = '/'))
+```
+
+
+```{r include=FALSE}
+
+
+# Keep an untouched copy for comparison
+df0 <- df
+
+# Convert WITHOUT modifying df0
+dt <- as.data.table(df0)
+
+library(data.table)
+
+# dt is already a data.table from your test
+dt[, packageId := sub("\\.txt$", "", file_name)]
+dt[, packageId := toupper(packageId)]  # normalize to match hearings file if needed
+
+# Check
+dt[1:10, .(file_name, packageId)]
+dt[, .(n=.N, n_pkg=sum(!is.na(packageId)), pct=round(100*mean(!is.na(packageId)), 3))]
+
+hearings <- fread(paste(here(),"data", "govinfo_house_and_joint_hearings.csv",sep = '/'))
+
+# normalize packageId case on both sides
+hearings[, packageId := toupper(packageId)]
+
+# ensure year exists
+hearings[, year := as.integer(substr(dateIssued, 1, 4))]
+
+hearings <- unique(hearings[, .(packageId, title, congress, chamber, dateIssued, year)], by="packageId")
+
+setkey(hearings, packageId)
+setkey(dt, packageId)
+
+out <- hearings[dt]  # left join, keeps all rows from dt
+
+cat("Rows:", nrow(out), "\n")
+cat("Matched (non-missing title):", sum(!is.na(out$title)), "\n")
+cat("Unmatched:", sum(is.na(out$title)), "\n")
+
+
+# If you named your joined table `out` and the pre-join df is `dt`
+out[is.na(title), .(
+  n = .N,
+  n_file_name_na = sum(is.na(file_name)),
+  n_packageId_na = sum(is.na(packageId))
+)]
+
+out[is.na(title) & !is.na(file_name),
+    head(.SD, 30),
+    .SDcols = c("file_name", "packageId")]
+
+# classify unmatched by whether the ID looks like HHRG/JHRG/SHRG/etc
+out[is.na(title) & !is.na(packageId), .(
+  is_hhrg = sum(grepl("HHRG", packageId, ignore.case=TRUE)),
+  is_jhrg = sum(grepl("JHRG", packageId, ignore.case=TRUE)),
+  is_shrg = sum(grepl("SHRG", packageId, ignore.case=TRUE)),
+  other   = sum(!grepl("(HHRG|JHRG|SHRG)", packageId, ignore.case=TRUE))
+)]
+
+
+out[is.na(title) & !is.na(file_name),
+    head(.SD, 30),
+    .SDcols = c("file_name", "packageId")]
+
+
+head(out,100)
+
+out$year
+
+
+
+out %>%
+  filter(!is.na(title)) %>%
+  head(100)
+
+
+
+write_fst(out, paste(here(),"data","out_hearings_enriched.fst",sep = '/'), compress = 100)
+
+
+
+summary(out$bill)
+
+sum(is.na(out$demratio))/nrow(out)*100
+
+out %>%
+  select(bill,title,title_speech,title_hearings,year,year,year_speech,congress_speech,congress_hearings) %>%
+  filter(is.na(bill)) %>%
+  head(1000)
+```
+
+
+```{r include=FALSE}
+
+
+
+
+
+sum(is.na(df$year))/nrow(df)*100
+sum(is.na(df$year_speech))/nrow(df)*100
+sum(is.na(df$mean_score))/nrow(df)*100
+sum(is.na(df$title_hearings))/nrow(df)*100
+sum(is.na(df$title_speech))/nrow(df)*100
+
+
+length(unique(df$title_speech))
+
+df %>%
+  filter(is.na(year_speech)) %>%
+  select(speech,year_speech,year,title_speech,title_hearings,mean_score) %>%
+  head(100)
+
+
+
+title_level_years <- df %>%
+  filter(!is.na(title_speech)) %>%
+  group_by(title_speech) %>%
+  summarise(
+    year_agg = case_when(
+      any(is.na(year)) ~ NA_integer_,
+      n_distinct(year) == 1 ~ first(year),
+      TRUE ~ NA_integer_   # conflicting years → treat as NA
+    ),
+    .groups = "drop"
+  )
+
+num_titles_with_na <- title_level_years %>%
+  summarise(
+    n_titles_na = sum(is.na(year_agg)),
+    n_titles_total = n(),
+    na_rate = n_titles_na / n_titles_total
+  )
+
+num_titles_with_na
+
+titles_with_year <- title_level_years %>%
+  filter(!is.na(year_agg))
+
+
+titles_per_year <- titles_with_year %>%
+  count(year_agg, name = "n_unique_titles") %>%
+  arrange(year_agg)
+
+titles_per_year
+
+
+
+
+
+# 1) Hearings: simple numeric year
+hearings_stats <- df %>%
+  group_by(year) %>%
+  summarise(
+    total_rows     = n(),
+    unique_titles  = n_distinct(title_hearings, na.rm = TRUE),
+    missing_titles = sum(is.na(title_hearings)),
+    missing_rate   = missing_titles / total_rows,
+    .groups = "drop"
+  ) %>%
+  transmute(
+    type = "hearings",
+    year_group = as.character(year),  # <- key fix
+    total_rows, unique_titles, missing_titles, missing_rate
+  )
+
+speech_stats <- df %>%
+  mutate(
+    year_group = str_squish(year_speech),
+    year_group = na_if(year_group, "")
+  ) %>%
+  group_by(year_group) %>%
+  summarise(
+    total_rows     = n(),
+    unique_titles  = n_distinct(title_speech, na.rm = TRUE),
+    missing_titles = sum(is.na(title_speech)),
+    missing_rate   = missing_titles / total_rows,
+    .groups = "drop"
+  ) %>%
+  mutate(type = "speech") %>%
+  select(type, year_group, total_rows, unique_titles, missing_titles, missing_rate)
+
+summary_bins <- bind_rows(hearings_stats, speech_stats) %>%
+  arrange(type, year_group)
+
+
+summary_bins
+
+
+unique(df$year_speech)
+```
+
+
+
+```{r include=FALSE}
+
+out <- read_fst(paste(here(),"data","out_hearings_enriched.fst",sep = '/'))
+
+
+
+df <- out
+
+unique_years <- sort(unique(na.omit(df$year)), decreasing = FALSE)
+unique_congress <- sort(unique(na.omit(df$congress)), decreasing = FALSE)
+
+custom_ticks <- unique_years[seq(1, length(unique_years), by = 2)]  # Select every 2nd year
+custom_ticks <- seq(1996, 2016, by = 2)
+
+
+# Define Congress sessions and their corresponding years
+congress_mapping <- data.frame(
+  congress = unique_congress,
+  start_year = seq(1997, by = 2, length.out = 10),
+  end_year = seq(1998, by = 2, length.out = 10)
+)
+
+# Generate custom ticks for the x-axis
+custom_labels <- paste0(custom_ticks, " (", df$congress[match(custom_ticks, df$year)],"th)")
+
+
+
+#write.csv(sample, paste(path,"data", "sample.csv",sep = '/'), row.names = FALSE)
+
+#df_1 <- read.csv(paste(here(),"data", "merged_metadata_df.csv",sep = '/'))
+
+
+
+```
+# descriptive table
+```{r include=FALSE}
+
+library(dplyr)
+library(knitr)
+library(kableExtra)
+
+# df = your dataset
+# expected columns: year, congress, title, speech
+
+# Main table
+tab <- df %>%
+  mutate(
+    year = as.integer(year),
+    congress = as.integer(congress)
+  ) %>%
+  group_by(year, congress) %>%
+  summarise(
+    hearings = n_distinct(packageId),
+    speeches = n_distinct(speech),
+    .groups = "drop"
+  ) %>%
+  arrange(year, congress) %>%
+  filter(hearings > 3) %>%
+  filter(!is.na(year), !is.na(congress)) %>%   # <-- DROP NA ROWS
+  mutate(
+    year = as.character(year),
+    congress = as.character(congress)
+  )
+
+totals <- tab %>%
+  summarise(
+    year = "Total",
+    congress = "",
+    hearings = sum(hearings),
+    speeches = sum(speeches)
+  )
+
+tab_final <- bind_rows(tab, totals)
+
+latex_table <- knitr::kable(
+  tab_final,
+  format = "latex",
+  booktabs = TRUE,
+  col.names = c("Year", "Congress", "Unique Hearings", "Unique Speech Chunks"),
+  caption = "Descriptive statistics by year and Congress."
+)
+
+file = paste(here(),"plots", "descriptive_stats_hearings.tex",sep = '/')
+
+writeLines(latex_table, file)
+
+
+```
+
+```{r include=FALSE}
+
+df_new_parsing <- read.csv(paste(here(),"hearings_testing", "sentence_predictions_all.csv",sep = '/'))
+
+head(df_new_parsing,100)
+
+
+df_new_parsing %>%
+  summarise(
+    n_unique_title_hearings = n_distinct(title_hearings),
+    .groups = "drop"
+  )
+```
+
+
+```{r include=FALSE}
+a <- df %>%
+  group_by(hearing) %>%
+  summarise(mean_empirical = mean(mean_score)) 
+
+mean_dist = mean(a$mean_empirical)
+median_dist = median(a$mean_empirical)
+
+mean_dist
+density <- df %>%
+  group_by(hearing) %>%
+  summarise(mean_empirical = mean(mean_score)) %>%
+  ggplot(aes(x=mean_empirical)) +
+  geom_density() +
+  geom_vline(aes(xintercept = mean(mean_empirical)), 
+             linetype = "dashed", color = "blue", size = 1)+
+  labs(
+    x = "Empirical Score",
+    y = "Density") +
+  theme_minimal()
+
+df
+
+density
+# Save the plot
+ggsave(paste(path,"plots","empirical_density.png",sep = "/"),
+  density, width = 8, height = 6, dpi = 300)
+
+
+
+pkg_level <- df %>%
+  group_by(packageId) %>%
+  summarise(
+    empirical_score = mean(mean_score, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+stargazer(
+  as.data.frame(pkg_level["empirical_score"]),   # 1-col data.frame (keeps stargazer in "summary" mode)
+  type = "latex",
+  summary = TRUE,
+  digits = 3,
+  covariate.labels = "Empirical Score (Package-Level Mean)",
+  title = "Descriptive Statistics of Package-Level Empirical Score",
+  label = "tab:desc_empirical_score_pkg",
+  summary.stat = c("n", "mean", "sd", "median", "min", "max")
+)
+```
+
+
+```{r include=FALSE}
+# Define the variables to plot
+class_const_vars <- paste0("class_const_", 1:5)
+
+# Loop through each variable to create and save plots
+for (var in class_const_vars) {
+  const_plot <- df %>%
+    filter(!is.na(.data[[var]])) %>%  # Dynamically filter non-NA values for the current variable
+    mutate(current_var = as.factor(.data[[var]])) %>%  # Dynamically create a factor for the current variable
+    group_by(hearing, current_var, year) %>%
+    summarise(mean_empirical = mean(mean_score), .groups = "drop") %>%
+    group_by(current_var, year) %>%
+    summarise(empirical = mean(mean_empirical), .groups = "drop") %>%
+    ggplot(aes(y = empirical, x = year, group = current_var, color = current_var, linetype = current_var)) +
+    geom_point(aes(shape = current_var)) +  # Different shapes for points
+    geom_smooth(se = FALSE) +  # Remove SE from smooth lines
+    scale_x_continuous(breaks = custom_ticks) +  # Tick marks for years
+    scale_color_manual(values = c("1" = "red", "0" = "black"),  # Different colors
+                       labels = c("1" = "Constitutional", "0" = "Non-Constitutional")) +
+    scale_linetype_manual(values = c("1" = "dashed", "0" = "solid"),  # Different line types
+                          labels = c("1" = "Constitutional", "0" = "Non-Constitutional")) +
+    scale_shape_manual(values = c("1" = 17, "0" = 16),  # Different shapes (circle and triangle)
+                       labels = c("1" = "Constitutional", "0" = "Non-Constitutional")) +
+    labs(
+      x = "Year",
+      y = "Empirical Score",
+      title = paste("Empirical Score by Year for", var)
+    ) +
+    theme_minimal() +
+    theme(
+      legend.title = element_blank(),  # Remove legend title
+      legend.position = "right"       # Adjust legend position if necessary
+    )
+
+  # Save each plot with a unique filename
+  ggsave(
+    filename = paste0(path, "/plots/", var, "_plot.png"),
+    plot = const_plot,
+    width = 8,
+    height = 6,
+    dpi = 300
+  )
+}
+
+
+
+# regression coefs
+
+
+coefficients_list <- list()
+
+# Loop through each variable and fit the model
+for (var in class_const_vars) {
+  # Fit the model
+  model <- lm(
+    formula = as.formula(paste(
+      "mean_score ~ year + congress_hearings + pres_party + house_maj +",
+      "divided_house + divided_senate + dem_dw + median_floor + chair_dw +",
+      "dem + type_legislative + bill +", var, "+ cmt_govtrack + majortopic2"
+    )),
+    data = df
+  )
+  
+  # Check if the variable is in the model
+  if (var %in% rownames(coef(summary(model)))) {
+    # Extract coefficient and confidence intervals
+    coef <- coef(summary(model))[var, "Estimate"]
+    ci <- confint(model)[var, ]
+    
+    # Save the results
+    coefficients_list[[var]] <- list(
+      coefficient = coef,
+      ci_lower = ci[1],
+      ci_upper = ci[2]
+    )
+  } else {
+    # Variable not in the model
+    coefficients_list[[var]] <- list(
+      coefficient = NA,
+      ci_lower = NA,
+      ci_upper = NA
+    )
+    warning(paste("Variable", var, "was not included in the model."))
+  }
+}
+
+
+# Define custom labels for the variables
+custom_labels <- c(
+  "class_const_1" = "Minimal",
+  "class_const_2" = "Textual",
+  "class_const_3" = "Extended Textual",
+  "class_const_4" = "Originalism",
+  "class_const_5" = "Expansive"
+)
+
+# Transform the coefficients list into a data frame
+coefficients_df <- do.call(rbind, lapply(names(coefficients_list), function(var) {
+  data.frame(
+    variable = var,
+    coefficient = coefficients_list[[var]]$coefficient,
+    ci_lower = coefficients_list[[var]]$ci_lower,
+    ci_upper = coefficients_list[[var]]$ci_upper
+  )
+})) %>%
+  mutate(
+    label = factor(custom_labels[variable], levels = custom_labels)  # Maintain custom order
+  )
+
+
+
+# Plot the coefficients
+ggplot(coefficients_df, aes(x = coefficient, y = label)) +
+  geom_point(size = 3) +  # Plot points for coefficients
+  geom_errorbarh(aes(xmin = ci_lower, xmax = ci_upper), height = 0.2) +  # Add horizontal error bars for CIs
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red") +  # Vertical line at 0
+  labs(
+    x = "Coefficient",
+    y = NULL,  # Y-axis label removed to use variable names directly
+    title = "Regression Coefficients for Con Dicts"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(size = 10),  # Customize y-axis text size
+    axis.title.x = element_text(size = 12) # Customize x-axis title size
+  )
+
+
+
+##############################
+##############################
+##############################
+
+# using continuous variables
+
+class_const_vars <- paste0("average_freq_ver", 1:5)
+
+
+coefficients_list <- list()
+
+# Loop through each variable and fit the model
+for (var in class_const_vars) {
+  # Fit the model
+  model <- lm(
+    formula = as.formula(paste(
+      "mean_score ~ year + congress_hearings + pres_party + house_maj +",
+      "divided_house + divided_senate + dem_dw + median_floor + chair_dw +",
+      "dem + type_legislative + bill +", var, "+ cmt_govtrack + majortopic2"
+    )),
+    data = df
+  )
+  
+  # Check if the variable is in the model
+  if (var %in% rownames(coef(summary(model)))) {
+    # Extract coefficient and confidence intervals
+    coef <- coef(summary(model))[var, "Estimate"]
+    ci <- confint(model)[var, ]
+    
+    # Save the results
+    coefficients_list[[var]] <- list(
+      coefficient = coef,
+      ci_lower = ci[1],
+      ci_upper = ci[2]
+    )
+  } else {
+    # Variable not in the model
+    coefficients_list[[var]] <- list(
+      coefficient = NA,
+      ci_lower = NA,
+      ci_upper = NA
+    )
+    warning(paste("Variable", var, "was not included in the model."))
+  }
+}
+
+
+# Define custom labels for the variables
+custom_labels <- c(
+  "average_freq_ver1" = "Minimal",
+  "average_freq_ver2" = "Textual",
+  "average_freq_ver3" = "Extended Textual",
+  "average_freq_ver4" = "Originalism",
+  "average_freq_ver5" = "Expansive"
+)
+
+# Transform the coefficients list into a data frame
+coefficients_df <- do.call(rbind, lapply(names(coefficients_list), function(var) {
+  data.frame(
+    variable = var,
+    coefficient = coefficients_list[[var]]$coefficient,
+    ci_lower = coefficients_list[[var]]$ci_lower,
+    ci_upper = coefficients_list[[var]]$ci_upper
+  )
+})) %>%
+  mutate(
+    label = factor(custom_labels[variable], levels = custom_labels)  # Maintain custom order
+  )
+
+
+
+# Plot the coefficients
+ggplot(coefficients_df, aes(x = coefficient, y = label)) +
+  geom_point(size = 3) +  # Plot points for coefficients
+  geom_errorbarh(aes(xmin = ci_lower, xmax = ci_upper), height = 0.2) +  # Add horizontal error bars for CIs
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red") +  # Vertical line at 0
+  labs(
+    x = "Coefficient",
+    y = NULL,  # Y-axis label removed to use variable names directly
+    title = "Regression Coefficients for Con Dicts"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(size = 10),  # Customize y-axis text size
+    axis.title.x = element_text(size = 12) # Customize x-axis title size
+  )
+```
+
+
+
+# main plots
+```{r include=FALSE}
+
+party_control <- read.csv(paste(here(),"data", "congresS_control.csv",sep = '/'))
+
+party_control <- party_control %>%
+  filter(end_year<= 2017)
+
+
+time_plot <- df %>%
+  filter(!is.na(year)) %>%
+  group_by(hearing,year) %>%
+  summarise(mean_empirical = mean(mean_score)) %>%
+  group_by(year) %>%
+  summarise(empirical = mean(mean_empirical)) %>%
+  ggplot(aes(y=empirical,x=year))+
+  geom_point()+
+  geom_smooth()+
+   scale_x_continuous(
+    breaks = custom_ticks)+  # Tick marks for years  
+  labs(
+    x = "Year",
+    y = "Empirical Score") +
+  theme_minimal()
+
+ggsave(paste(here(),"plots","time_plot.png",sep = "/"),
+  time_plot, width = 8, height = 6, dpi = 300)
+
+time_plot
+
+
+
+
+minority_plot <- df %>%
+  filter(!is.na(minority)) %>%
+  filter(!is.na(majority_party)) %>%
+  mutate(
+    minority = as.factor(if_else(minority == 1, "Minority", "Majority"))  # Replace 1 with Minority, 0 with Majority
+  ) %>%
+  group_by(hearing, minority, year) %>%
+  summarise(mean_empirical = mean(mean_score, na.rm = TRUE), .groups = "drop") %>%
+  group_by(minority, year) %>%
+  summarise(empirical = mean(mean_empirical, na.rm = TRUE), .groups = "drop") %>%
+  ggplot(aes(y = empirical, x = year, group = minority)) +
+  geom_point(aes(x = year + 0.5, shape = minority), size = 2) +  # Shift points leftward by 0.5
+  geom_smooth(aes(x = year + 0.5,linetype = minority), color = "black", se = TRUE) +  # Black lines with SE and line types
+  geom_rect(
+    data = party_control,  # Use broader ranges for shading
+    aes(
+      xmin = start_year, xmax = end_year,  # Use start and end year for ranges
+      ymin = -Inf, ymax = Inf, 
+      fill = majority_party
+    ),
+    inherit.aes = FALSE,
+    alpha = 0.2  # Transparency for shading
+  ) +
+  scale_x_continuous(breaks = custom_ticks) +  # Custom tick marks for years
+  scale_shape_manual(
+    values = c("Minority" = 17, "Majority" = 16),  # Custom shapes for points
+    name = "Committee Control"
+  ) +
+  scale_linetype_manual(
+    values = c("Minority" = "dashed", "Majority" = "solid"),  # Different line types
+    name = "Committee Control"
+  ) +
+  scale_fill_manual(
+    values = c("D" = "blue", "R" = "red"),  # Shading for Majority party
+    name = "House Control"  # Legend title for shading
+  ) +
+  labs(
+    x = "Year",
+    y = "Empirical Score"
+  ) +
+  theme_minimal()
+
+
+ggsave(
+    filename = paste0(path, "/plots/minority_plot.png"),
+    plot = minority_plot,
+    width = 8,
+    height = 6,
+    dpi = 300
+  )
+
+
+party_plot <- df %>%
+  filter(!is.na(dem)) %>%
+  mutate(
+    dem = as.factor(if_else(dem == 1, "D", "R"))  # Replace 1 with D and 0 with R
+  ) %>%
+  group_by(hearing, dem, year) %>%
+  summarise(mean_empirical = mean(mean_score, na.rm = TRUE), .groups = "drop") %>%
+  group_by(dem, year) %>%
+  summarise(empirical = mean(mean_empirical, na.rm = TRUE), .groups = "drop") %>%
+  ggplot(aes(y = empirical, x = year, group = dem, color = dem)) +
+  # geom_rect(
+  #   data = party_control,  # Use the updated party_control dataset
+  #   aes(
+  #     xmin = start_year, xmax = end_year,  # Use start and end years for ranges
+  #     ymin = -Inf, ymax = Inf, 
+  #     fill = majority_party
+  #   ),
+  #   inherit.aes = FALSE,
+  #   alpha = 0.2  # Transparency for shading
+  # ) +
+  geom_rect(
+    data = party_control,
+    aes(
+      xmin = start_year,
+      xmax = end_year,
+      ymin = -Inf,
+      ymax = Inf,
+      fill = majority_party,
+      alpha = power_gap_scaled
+    ),
+    inherit.aes = FALSE
+  ) +
+  geom_point(aes(x = year + 0.5)) +  # Shift points leftward by 0.5
+#  geom_smooth(aes(x = year + 0.5),se = TRUE) +  # Add SE to smooth lines
+  geom_line(aes(x = year + 0.5)) +  # Replaces geom_smooth
+  scale_x_continuous(breaks = custom_ticks) +  # Custom tick marks for years
+  scale_color_manual(
+    values = c("R" = "red", "D" = "blue"),  # Custom colors for R and D
+    name = "Party"  # Legend title
+  ) +
+  scale_fill_manual(
+    values = c("D" = "blue", "R" = "red"),  # Shading for Majority party
+    name = "House Control"  # Legend title for shading
+  ) +
+  scale_alpha_continuous(range = c(0.1, 0.5)) + 
+  guides(alpha = "none") +  
+  labs(
+    x = "Year",
+    y = "Empirical Score"
+  ) +
+  theme_minimal()
+
+party_plot
+
+
+ggsave(
+    filename = paste0(here(), "/plots/party_plot.png"),
+    plot = party_plot,
+    width = 8,
+    height = 6,
+    dpi = 300
+  )
+
+
+party_plot_facet <- df %>%
+  filter(!is.na(dem)) %>%
+  filter(!is.na(cmt_govtrack)) %>%
+  mutate(
+    dem = as.factor(if_else(dem == 1, "D", "R"))
+  ) %>%
+  group_by(cmt_govtrack, hearing, dem, year) %>%
+  summarise(mean_empirical = mean(mean_score, na.rm = TRUE), .groups = "drop") %>%
+  group_by(cmt_govtrack, dem, year) %>%
+  summarise(empirical = mean(mean_empirical, na.rm = TRUE), .groups = "drop") %>%
+  ggplot(aes(y = empirical, x = year, group = dem, color = dem)) +
+  geom_rect(
+    data = party_control,
+    aes(
+      xmin = start_year,
+      xmax = end_year,
+      ymin = -Inf,
+      ymax = Inf,
+      fill = majority_party,
+      alpha = power_gap_scaled
+    ),
+    inherit.aes = FALSE
+  ) +
+  geom_point(aes(x = year + 0.5)) +
+  geom_line(aes(x = year + 0.5)) +
+  facet_wrap(~ cmt_govtrack) +
+# scale_x_continuous(breaks = custom_ticks) +
+  scale_color_manual(
+    values = c("R" = "red", "D" = "blue"),
+    name = "Party"
+  ) +
+  scale_fill_manual(
+    values = c("D" = "blue", "R" = "red"),
+    name = "House Control"
+  ) +
+  scale_alpha_continuous(range = c(0.1, 0.5)) +
+  guides(alpha = "none") +
+  labs(
+    x = "Year",
+    y = "Empirical Score"
+  ) +
+  theme_minimal()
+
+
+ggsave(
+    filename = paste0(path, "/plots/party_plot_facet.png"),
+    plot = party_plot_facet,
+    width = 8,
+    height = 6,
+    dpi = 300
+  )
+
+
+
+committees <- unique(na.omit(df$cmt_govtrack))
+
+# Loop through each committee
+for (committee in committees) {
+  
+  # Filter and summarize data for just this committee
+  committee_df <- df %>%
+    filter(!is.na(dem), cmt_govtrack == committee) %>%
+    mutate(dem = as.factor(if_else(dem == 1, "D", "R"))) %>%
+    group_by(hearing, dem, year) %>%
+    summarise(mean_empirical = mean(mean_score, na.rm = TRUE), .groups = "drop") %>%
+    group_by(dem, year) %>%
+    summarise(empirical = mean(mean_empirical, na.rm = TRUE), .groups = "drop")
+  
+  # Create the plot
+  p <- ggplot(committee_df, aes(y = empirical, x = year, group = dem, color = dem)) +
+    geom_rect(
+      data = party_control,
+      aes(
+        xmin = start_year,
+        xmax = end_year,
+        ymin = -Inf,
+        ymax = Inf,
+        fill = majority_party,
+        alpha = power_gap_scaled
+      ),
+      inherit.aes = FALSE
+    ) +
+    geom_point(aes(x = year + 0.5)) +
+    geom_line(aes(x = year + 0.5)) +
+    scale_x_continuous(breaks = custom_ticks) +
+    scale_color_manual(values = c("R" = "red", "D" = "blue")) +
+    scale_fill_manual(values = c("D" = "blue", "R" = "red")) +
+    scale_alpha_continuous(range = c(0.1, 0.5)) +
+    guides(alpha = "none", fill = guide_legend(title = "House Control"), color = guide_legend(title = "Party")) +
+    labs(
+      title = paste("Empirical Score Over Time –", committee),
+      x = "Year",
+      y = "Empirical Score"
+    ) +
+    theme_minimal()
+  
+  
+  file_path = paste0(path,"/plots/","party_plot_",committee, ".png")
+  
+  # Save the plot
+  ggsave(filename = file_path,
+         plot = p,
+         width = 10, height = 6, dpi = 300)
+}
+
+
+
+
+
+
+library(forcats)
+
+# 1) Build a stable ordered factor for bins (ordered by first year found)
+bin_levels <- df %>%
+  distinct(year_speech) %>%
+  mutate(
+    year_bin = str_squish(year_speech),
+    first_year = suppressWarnings(as.integer(str_extract(year_bin, "\\d{4}")))
+  ) %>%
+  filter(!is.na(year_bin), year_bin != "") %>%
+  arrange(first_year, year_bin) %>%
+  pull(year_bin)
+
+party_plot_with_year_speech <- df %>%
+  filter(!is.na(dem)) %>%
+  mutate(
+    dem = as.factor(if_else(dem == 1, "D", "R")),
+    year_bin = str_squish(year_speech),
+    year_bin = na_if(year_bin, ""),
+    year_bin = factor(year_bin, levels = bin_levels),
+    x_pos = as.numeric(year_bin)   # numeric positions for shading if needed
+  ) %>%
+  filter(!is.na(year_bin)) %>%
+  group_by(hearing, dem, year_bin, x_pos) %>%
+  summarise(mean_empirical = mean(mean_score, na.rm = TRUE), .groups = "drop") %>%
+  group_by(dem, year_bin, x_pos) %>%
+  summarise(empirical = mean(mean_empirical, na.rm = TRUE), .groups = "drop") %>%
+  ggplot(aes(y = empirical, x = year_bin, group = dem, color = dem)) +
+
+  # rectangles: map numeric index; use an alternate aesthetic with inherit.aes = FALSE
+  geom_rect(
+    data = party_control %>%
+      mutate(
+        # map the numeric year range to bin-index space
+        xmin = findInterval(start_year, sort(unique(bin_levels |> str_extract("\\d{4}") |> as.integer())), rightmost.closed = TRUE) + 0.5,
+        xmax = findInterval(end_year,   sort(unique(bin_levels |> str_extract("\\d{4}") |> as.integer())), rightmost.closed = TRUE) + 1.5
+      ),
+    aes(
+      xmin = xmin,
+      xmax = xmax,
+      ymin = -Inf,
+      ymax = Inf,
+      fill = majority_party,
+      alpha = power_gap_scaled
+    ),
+    inherit.aes = FALSE
+  ) +
+
+  geom_point(position = position_nudge(x = -0.15)) +
+  geom_line(position = position_nudge(x = -0.15)) +
+
+  scale_x_discrete(drop = FALSE) +
+  scale_color_manual(
+    values = c("R" = "red", "D" = "blue"),
+    name = "Party"
+  ) +
+  scale_fill_manual(
+    values = c("D" = "blue", "R" = "red"),
+    name = "House Control"
+  ) +
+  scale_alpha_continuous(range = c(0.1, 0.5)) +
+  guides(alpha = "none") +
+  labs(x = "Year bin (speech)", y = "Empirical Score") +
+  theme_minimal()
+
+
+party_plot_with_year_speech
+
+ggsave(
+    filename = paste0(here(), "/plots/party_plot_with_year_speech.png"),
+    plot = party_plot_with_year_speech,
+    width = 8,
+    height = 6,
+    dpi = 300
+  )
+
+
+```
+
+
+
+```{r include=FALSE}
+
+specific_bill <- df %>%
+  filter(!is.na(bill)) %>%
+  mutate(bill = as.factor(bill)) %>%
+  group_by(hearing,bill,year) %>%
+  summarise(mean_empirical = mean(mean_score)) %>%
+  group_by(bill,year) %>%
+  summarise(empirical = mean(mean_empirical)) %>%
+  ggplot(aes(y=empirical,x=year,group=bill,color=bill))+
+  geom_point()+
+  geom_smooth(se = TRUE) +  # Remove SE from smooth lines
+  scale_x_continuous(breaks = custom_ticks) +  # Custom tick marks for years
+  scale_color_manual(values = c("1" = "blue", "0" = "black"),
+                     labels = c("1" = "Bill on Table", "0" = "No Bill")) +
+  labs(
+    x = "Year",
+    y = "Empirical Score",
+    color = "Hearing Type"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.title = element_blank(),
+    legend.position = "right"       # Adjust legend position if necessary
+  )
+
+
+specific_bill
+
+# Save the plot
+ggsave(paste(here(),"plots","specific_bill_plot.png",sep = "/"),
+  specific_bill, width = 8, height = 6, dpi = 300)
+
+
+
+type_hearing <- df %>%
+  filter(!is.na(type)) %>%
+  mutate(type = as.factor(type)) %>%
+  group_by(hearing,type,year) %>%
+  summarise(mean_empirical = mean(mean_score)) %>%
+  group_by(type,year) %>%
+  summarise(empirical = mean(mean_empirical)) %>%
+  ggplot(aes(y=empirical,x=year,group=type,color=type))+
+  geom_point()+
+  geom_smooth(se = TRUE) +  # Remove SE from smooth lines
+  scale_x_continuous(breaks = custom_ticks) +  # Custom tick marks for years
+  scale_color_manual(values = c("oversight" = "blue", "legislative" = "black"),
+                     labels = c("oversight" = "Oversight", "legislative" = "Legislative")) +
+  labs(
+    x = "Year",
+    y = "Empirical Score",
+    color = "Hearing Type"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "right"       # Adjust legend position if necessary
+  )
+
+type_hearing
+# Save the plot
+ggsave(paste(here(),"plots","type_hearing.png",sep = "/"),
+  type_hearing, width = 8, height = 6, dpi = 300)
+
+
+
+
+# by committee
+
+committee_empirical_bar_chart <- df %>%
+  filter(!is.na(committee_code2)) %>%
+  group_by(committee_code2) %>%
+  summarise(
+    mean_empirical = mean(mean_score),
+    sd_empirical = sd(mean_score),  # Standard deviation
+    n = n()  # Sample size
+  ) %>%
+  mutate(
+    se_empirical = sd_empirical / sqrt(n)  # Standard error
+  ) %>%
+  ggplot(aes(x = reorder(committee_code2, mean_empirical), y = mean_empirical)) +
+  geom_bar(stat = "identity", fill = "skyblue", width = 0.7) +  # Bar chart
+  geom_errorbar(aes(ymin = mean_empirical - se_empirical, ymax = mean_empirical + se_empirical), 
+                width = 0.2) +  # Add error bars
+  labs(
+    x = "Committee",
+    y = "Mean Empirical Score") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)  # Rotate x-axis labels for better readability
+  )
+
+
+# Save the plot
+ggsave(paste(path,"plots","committee_empirical_bar_chart.png",sep = "/"),
+  committee_empirical_bar_chart, width = 8, height = 6, dpi = 300)
+
+
+
+committee_empirical_bar_chart_2 <- df %>%
+  filter(!is.na(cmt_govtrack)) %>%
+  group_by(cmt_govtrack) %>%
+  summarise(
+    mean_empirical = mean(mean_score),
+    sd_empirical = sd(mean_score),  # Standard deviation
+    n = n()  # Sample size
+  ) %>%
+  mutate(
+    se_empirical = sd_empirical / sqrt(n)  # Standard error
+  ) %>%
+  ggplot(aes(x = reorder(cmt_govtrack, mean_empirical), y = mean_empirical)) +
+  geom_bar(stat = "identity", fill = "skyblue", width = 0.7) +  # Bar chart
+  geom_errorbar(aes(ymin = mean_empirical - se_empirical, ymax = mean_empirical + se_empirical), 
+                width = 0.2) +  # Add error bars
+  labs(
+    x = "Committee",
+    y = "Mean Empirical Score") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)  # Rotate x-axis labels for better readability
+  )
+
+# Save the plot
+ggsave(paste(path,"plots","committee_empirical_bar_chart_2.png",sep = "/"),
+  committee_empirical_bar_chart_2, width = 8, height = 6, dpi = 300)
+
+
+
+## using extended textual dict
+committee_empirical_bar_withconst <- df %>%
+  filter(!is.na(class_const_3)) %>%
+  mutate(
+    class_const_label = ifelse(class_const_3 == 1, "Constitutional", "Non-Constitutional")  # Map values to labels
+  ) %>%
+  filter(!is.na(cmt_govtrack)) %>%
+  group_by(cmt_govtrack, class_const_label) %>%
+  summarise(
+    mean_empirical = mean(mean_score),
+    count = n(),
+    .groups = 'drop'
+  ) %>%
+  group_by(cmt_govtrack) %>%
+  mutate(
+    total_count = sum(count),
+    prop_class_const = count / total_count  # Proportion of class_const
+  ) %>%
+  ungroup() %>%
+  ggplot(aes(
+    x = reorder(cmt_govtrack, mean_empirical), 
+    y = mean_empirical, 
+    fill = class_const_label
+  )) +
+  geom_bar(stat = "identity", position = "stack", width = 0.7) +  # Stacked bar chart
+  labs(
+    x = "Committee",
+    y = "Mean Empirical Score"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),  # Rotate x-axis labels
+    legend.title = element_blank()  # Remove legend title
+  )
+
+ggsave(paste(path,"plots","committee_empirical_bar_withconst.png",sep = "/"),
+  committee_empirical_bar_withconst, width = 8, height = 6, dpi = 300)
+
+
+topic_bar_chart <- df %>%
+  filter(!is.na(majortopic2) & majortopic2 != "") %>%
+  group_by(majortopic2) %>%
+  summarise(
+    mean_empirical = mean(mean_score),
+    sd_empirical = sd(mean_score),  # Standard deviation
+    n = n()  # Sample size
+  ) %>%
+  mutate(
+    se_empirical = sd_empirical / sqrt(n)  # Standard error
+  ) %>%
+  ggplot(aes(x = reorder(majortopic2, mean_empirical), y = mean_empirical)) +
+  geom_bar(stat = "identity", fill = "orange", width = 0.7) +  # Bar chart
+  geom_errorbar(aes(ymin = mean_empirical - se_empirical, ymax = mean_empirical + se_empirical), 
+                width = 0.2) +  # Add error bars
+  labs(
+    x = "Hearing Topic",
+    y = "Mean Empirical Score") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)  # Rotate x-axis labels for better readability
+  )
+
+# Save the plot
+ggsave(paste(path,"plots","topic_bar_chart.png",sep = "/"),
+  topic_bar_chart, width = 8, height = 6, dpi = 300)
+
+unique(df$year)
+
+names_dist <- df %>%
+  filter(!is.na(thomas_name) & thomas_name != "") %>%
+    group_by(thomas_name, dem) %>%
+  summarise(
+    mean_empirical = mean(mean_score, na.rm = TRUE),
+    sd_empirical = sd(mean_score, na.rm = TRUE),
+    n = n(),  # Number of observations per group
+    se_empirical = sd_empirical / sqrt(n),  # Standard error
+    .groups = "drop"
+  ) %>%
+  ggplot(aes(x = mean_empirical, fill = as.factor(dem))) +
+  geom_density(alpha = 0.5) +  # Density plot with transparency
+  scale_fill_manual(
+    values = c("0" = "red", "1" = "blue"),
+    labels = c("0" = "R", "1" = "D"),
+    name = "Party"
+  ) +
+  labs(
+    x = "Mean Empirical Score",
+    y = "Density") +
+  theme_minimal()
+
+# Save the plot
+ggsave(paste(path,"plots","names_dist.png",sep = "/"),
+  names_dist, width = 8, height = 6, dpi = 300)
+
+
+cmt_overtime <- df %>%
+    mutate(
+    cmt_govtrack = gsub("HOUSE COMMITTEE ON ", "", cmt_govtrack, fixed = TRUE),
+    cmt_govtrack = tools::toTitleCase(tolower(cmt_govtrack))
+  ) %>%
+  filter(!is.na(cmt_govtrack)) %>%
+  group_by(cmt_govtrack, year) %>%
+  summarise(empirical = mean(mean_score, na.rm = TRUE), .groups = "drop") %>%
+  ggplot(aes(y = empirical, x = year, group = cmt_govtrack, color = cmt_govtrack)) +
+  geom_smooth(se = FALSE) +
+  scale_x_continuous(breaks = custom_ticks) +  # Custom tick marks for years
+  labs(
+    x = "Year",
+    y = "Empirical Score"
+  ) +
+  theme_minimal()
+
+ggsave(paste(path,"plots","cmt_overtime.png",sep = "/"),
+  cmt_overtime, width = 8, height = 6, dpi = 300)
+
+
+
+
+```
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+library(stargazer)
+
+
+# speech as unit of analysis
+
+
+mode_nonmissing <- function(x) {
+  x <- x[!is.na(x)]
+  if (length(x) == 0) return(NA_integer_)
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+
+df$cmt_govtrack
+
+df_speech <- df %>%
+  group_by(speech) %>%
+  summarise(
+    mean_score   = mean(mean_score, na.rm = TRUE),
+    dem          = first(na.omit(dem)),
+    house_maj    = first(na.omit(house_maj)),
+    minority     = first(na.omit(minority)),
+    seniority_rs = first(na.omit(seniority_rs)),
+    cmt_govtrack = first(na.omit(cmt_govtrack)),
+    majortopic2 = first(na.omit(majortopic2)),
+    thomas_name = first(na.omit(thomas_name)),
+    year         = mode_nonmissing(as.integer(year)),
+    # Optional diagnostics:
+    year_nunique = n_distinct(year[!is.na(year)]),
+    year_any_na  = any(is.na(year)),
+    .groups = "drop"
+  )
+
+
+df_speech_full <- df_speech %>%
+  filter(!is.na(year)) %>%
+  filter(!is.na(seniority_rs)) %>%
+  filter(!is.na(minority))
+
+
+df_speech_full$house_maj_d <- ifelse(
+  df_speech_full$house_maj == "D", 1,
+  ifelse(df_speech_full$house_maj == "R", 0, NA)
+)
+
+
+# M1: Party + House Control + Year FE
+m1 <- lm(
+  mean_score ~ dem + house_maj_d  + factor(year),
+  data = df_speech_full
+)
+
+# M2: + Minority Status
+m2 <- lm(
+  mean_score ~ dem + house_maj_d  + minority + factor(year),
+  data = df_speech_full
+)
+
+# M3: + Seniority + Seniority × Minority
+m3 <- lm(
+  mean_score ~ dem + house_maj_d  + minority +
+    seniority_rs + minority:seniority_rs +
+    factor(year),
+  data = df_speech_full
+)
+
+# M4: + Committee FE + Topic FE
+m4 <- lm(
+  mean_score ~ dem + house_maj_d  + minority +
+    seniority_rs + minority:seniority_rs +
+    factor(year) + factor(cmt_govtrack) + factor(majortopic2),
+  data = df_speech_full
+)
+
+# M5: + Individual Member FE
+m5 <- lm(
+  mean_score ~ dem + house_maj_d  + minority +
+    seniority_rs + minority:seniority_rs +
+    factor(year) + factor(cmt_govtrack) +
+    factor(majortopic2) + factor(thomas_name),
+  data = df_speech_full
+)
+
+
+# --------- Prepare: names/labels you want in the table ----------
+
+
+
+
+library(stargazer)
+
+# Models list (you already have this)
+models <- list(m1, m2, m3, m4, m5)
+
+# Coefficients you want to show
+keep_vars <- c(
+  "dem",
+  "house_maj_d",
+  "minority",
+  "seniority_rs",
+  "minority:seniority_rs"
+)
+
+# Regex to omit all fixed effects
+omit_fe <- c(
+  "factor\\(year\\)",
+  "factor\\(cmt_govtrack\\)",
+  "factor\\(majortopic2\\)",
+  "factor\\(thomas_name\\)"
+)
+
+year_fe      <- c("Yes", "Yes", "Yes", "Yes", "Yes")
+committee_fe <- c("No",  "No",  "No",  "Yes", "Yes")
+topic_fe     <- c("No",  "No",  "No",  "Yes", "Yes")
+member_fe    <- c("No",  "No",  "No",  "No",  "Yes")
+
+
+
+stargazer(
+  models,
+  type = "latex",        # change to "latex" or "html" as needed
+  keep = keep_vars,
+  omit = omit_fe,
+  covariate.labels = row_labels[-1],  # drop intercept label
+  omit.stat = c("f", "ser"),
+  dep.var.labels = "Mean Speech Score",
+  column.labels = c("M1", "M2", "M3", "M4", "M5"),
+  add.lines = list(
+    c("Year Fixed Effects", year_fe),
+    c("Committee Fixed Effects", committee_fe),
+    c("Topic Fixed Effects", topic_fe),
+    c("Member Fixed Effects", member_fe)
+  ),
+  no.space = TRUE
+)
+
+# keep_order <- c(
+#   "(Intercept)",
+#   "dem",
+#   "house_maj_d",
+#   "minority",
+#   "seniority_rs",
+#   "minority:seniority_rs"
+# )
+# 
+# cov_labels <- c(
+#   "Intercept",
+#   "Party (D)",
+#   "House Control (D)",
+#   "Minority Status",
+#   "Seniority",
+#   "Seniority × Minority"
+# )
+# 
+# # --- Create stargazer output (capture to wrap in resizebox) ---
+# starg_out <- capture.output(
+#   stargazer(
+#     m1, m2, m3, m4, m5,
+#     type = "latex",
+#     dep.var.labels = "Empirical Score",
+#     title = "Regression Results",
+#     label = "tab:main_regressions",
+#     align = TRUE,
+#     no.space = TRUE,
+#     digits = 3,
+#     star.cutoffs = c(0.05, 0.01, 0.001),
+# 
+#     keep = keep_order,
+#     order = keep_order,
+#     covariate.labels = cov_labels,
+# 
+#     # Omit FE coefficients but KEEP intercept (make sure the FE names match your models)
+#     omit = c(
+#       "factor\\(year\\)",
+#       "factor\\(cmt_govtrack\\)",
+#       "factor\\(majortopic2\\)",
+#       "factor\\(thomas_name\\)",   # your model used factor(thomas_name)
+#       "factor\\(member_id\\)"      # keep this too if sometimes used
+#     ),
+# 
+#     # Remove default wide summary rows (we add our own)
+#     omit.stat = c("f", "ser", "n", "rsq", "adj.rsq"),
+# 
+#     # add custom lines
+#     add.lines = list(
+#       c("Year fixed effects", "Yes", "Yes", "Yes", "Yes", "Yes"),
+#       c("Committee fixed effects", "No", "No", "No", "Yes", "Yes"),
+#       c("Topic fixed effects", "No", "No", "No", "Yes", "Yes"),
+#       c("Member fixed effects", "No", "No", "No", "No", "Yes"),
+#       c("Observations",
+#         format(nobs(m1), big.mark = ","),
+#         format(nobs(m2), big.mark = ","),
+#         format(nobs(m3), big.mark = ","),
+#         format(nobs(m4), big.mark = ","),
+#         format(nobs(m5), big.mark = ",")),
+#       c("$R^2$",
+#         sprintf("%.3f", summary(m1)$r.squared),
+#         sprintf("%.3f", summary(m2)$r.squared),
+#         sprintf("%.3f", summary(m3)$r.squared),
+#         sprintf("%.3f", summary(m4)$r.squared),
+#         sprintf("%.3f", summary(m5)$r.squared)),
+#       c("Adj. $R^2$",
+#         sprintf("%.3f", summary(m1)$adj.r.squared),
+#         sprintf("%.3f", summary(m2)$adj.r.squared),
+#         sprintf("%.3f", summary(m3)$adj.r.squared),
+#         sprintf("%.3f", summary(m4)$adj.r.squared),
+#         sprintf("%.3f", summary(m5)$adj.r.squared))
+#     ),
+# 
+#     notes = c(
+#       "The unit of analysis is the speech chunk.",
+#       "All models include year fixed effects.",
+#       "Committee, topic, and individual member fixed effects are included where indicated.",
+#       "OLS estimates with standard errors in parentheses."
+#     ),
+#     notes.align = "l",
+# 
+#     out = NULL   # capture output instead of writing directly
+#   )
+# )
+# 
+# texfile <- file.path(here(), "plots", "main_regression_table.tex")
+# 
+# # Header + resize open
+# header <- c(
+#   "\\begin{table}[!htbp]",
+#   "\\centering",
+#   "\\caption{Regression Results}",
+#   "\\label{tab:main_regressions}",
+#   "\\resizebox{\\textwidth}{!}{%"
+# )
+# 
+# # Footer + resize close
+# footer <- c(
+#   "}", # close resizebox
+#   "\\end{table}"
+# )
+# 
+# # Combine and write
+# writeLines(c(header, starg_out, footer), con = texfile)
+# 
+# cat("Wrote LaTeX table to:", texfile, "\n")
+# 
+# 
+# 
+# # show which coefficients were aliased/dropped in M5
+# alias(m5)
+# 
+# # check for NA coefficients (dropped)
+# coefs_m5 <- coef(summary(m5))
+# coefs_m5[!complete.cases(coefs_m5), , drop = FALSE]
+# 
+# rownames(coef(summary(m3)))
+# alias(m5)
+# # sapply(
+#   df_speech[, c("mean_score", "dem", "house_maj",
+#                 "minority", "seniority_rs", "year","year_any_na")],
+#   function(x) sum(is.na(x))
+# )
+# 
+# df_speech_full <- df_speech %>%
+#   filter(!is.na(year))
+# 
+# head(df_speech_full)
+# 
+# 
+# head(df_speech_full$minority)
+# 
+# # Run models
+# m1 <- lm(mean_score ~ dem + house_maj + minority + factor(year),
+#          data = df_speech_full)
+# 
+# m2 <- lm(mean_score ~ dem + house_maj + minority +
+#            seniority_rs + factor(year),
+#          data = df_speech_full)
+# 
+# m3 <- lm(mean_score ~ dem * seniority_rs +
+#            house_maj + minority + factor(year),
+#          data = df_speech_full)
+# 
+# 
+# 
+# # Coefficients to display (exclude year FE and intercept)
+# keep_order <- c(
+#   "dem",
+#   "house_maj",
+#   "minority",
+#   "seniority_rs",
+#   "dem:seniority_rs"
+# )
+# 
+# cov_labels <- c(
+#   "Member's Party (D)",
+#   "House Majority",
+#   "Minority Status",
+#   "Member Seniority (Rescaled)",
+#   "Member's Party (D) × Seniority (Rescaled)"
+# )
+# 
+# stargazer(
+#   m1, m2, m3,
+#   type = "latex",
+#   dep.var.labels = "Empirical Score",
+#   title = "Regression Results",
+#   label = "tab:regression_results",
+#   align = TRUE,
+#   no.space = TRUE,
+#   digits = 3,
+#   star.cutoffs = c(0.05, 0.01, 0.001),
+# 
+#   # Show only substantive covariates
+#   keep = keep_order,
+#   order = keep_order,
+#   covariate.labels = cov_labels,
+# 
+#   # Omit year FE coefficients
+#   omit = "factor\\(year\\)",
+# 
+#   # Remove default summary rows (we add our own)
+#   omit.stat = c("f", "ser", "n", "rsq", "adj.rsq"),
+# 
+#   out = file.path(path, "plots", "regression_results_speech_unit.tex"),
+# 
+#   add.lines = list(
+#     c("Year fixed effects", "Yes", "Yes", "Yes"),
+#     c("Seniority Control", "No", "Yes", "Yes"),
+#     c("Interaction Terms", "No", "No", "Yes"),
+#     c("Observations",
+#       format(nobs(m1), big.mark = ","),
+#       format(nobs(m2), big.mark = ","),
+#       format(nobs(m3), big.mark = ",")),
+#     c("$R^2$",
+#       sprintf("%.3f", summary(m1)$r.squared),
+#       sprintf("%.3f", summary(m2)$r.squared),
+#       sprintf("%.3f", summary(m3)$r.squared)),
+#     c("Adj. $R^2$",
+#       sprintf("%.3f", summary(m1)$adj.r.squared),
+#       sprintf("%.3f", summary(m2)$adj.r.squared),
+#       sprintf("%.3f", summary(m3)$adj.r.squared))
+#   ),
+# 
+#   notes = c(
+#     "The unit of analysis is the speech chunk.",
+#     "All models include year fixed effects (coefficients omitted).",
+#     "House majority is assigned based on congressional control in the year of the hearing.",
+#     "OLS estimates with standard errors in parentheses."
+#   ),
+#   notes.align = "l"
+#   # If you want to suppress the default significance legend:
+#   # , notes.append = FALSE
+# )
+# 
+# 
+# # committee and topic FE
+# 
+# 
+# # Option A: lm() with committee & topic as factor FEs
+# m1_fe <- lm(mean_score ~ dem + house_maj + minority +
+#               factor(cmt_govtrack) + factor(majortopic2) + factor(year),
+#             data = df_speech_full)
+# 
+# m2_fe <- lm(mean_score ~ dem + house_maj + minority +
+#               seniority_rs + factor(cmt_govtrack) + factor(majortopic2) + factor(year),
+#             data = df_speech_full)
+# 
+# m3_fe <- lm(mean_score ~ dem * seniority_rs +
+#               house_maj + minority + factor(cmt_govtrack) + factor(majortopic2) + factor(year),
+#             data = df_speech_full)
+# 
+# # Keep reporting only the same substantive covariates (no FE coef rows)
+# omit_pattern <- "factor\\(year\\)|factor\\(cmt_govtrack\\)|factor\\(majortopic2\\)"
+# 
+# stargazer(
+#   m1_fe, m2_fe, m3_fe,
+#   type = "latex",
+#   dep.var.labels = "Empirical Score",
+#   title = "Regression Results (committee & topic controls)",
+#   label = "tab:regression_results_fe",
+#   align = TRUE,
+#   no.space = TRUE,
+#   digits = 3,
+#   star.cutoffs = c(0.05, 0.01, 0.001),
+# 
+#   keep = keep_order,
+#   order = keep_order,
+#   covariate.labels = cov_labels,
+# 
+#   omit = omit_pattern,
+# 
+#   omit.stat = c("f", "ser", "n", "rsq", "adj.rsq"),
+# 
+#   out = file.path(path, "plots", "regression_results_speech_unit_fe.tex"),
+# 
+#   add.lines = list(
+#     c("Year fixed effects", "Yes", "Yes", "Yes"),
+#     c("Committee fixed effects", "Yes", "Yes", "Yes"),
+#     c("Topic fixed effects", "Yes", "Yes", "Yes"),
+#     c("Seniority Control", "No", "Yes", "Yes"),
+#     c("Interaction Terms", "No", "No", "Yes"),
+#     c("Observations",
+#       format(nobs(m1_fe), big.mark = ","),
+#       format(nobs(m2_fe), big.mark = ","),
+#       format(nobs(m3_fe), big.mark = ",")),
+#     c("$R^2$",
+#       sprintf("%.3f", summary(m1_fe)$r.squared),
+#       sprintf("%.3f", summary(m2_fe)$r.squared),
+#       sprintf("%.3f", summary(m3_fe)$r.squared)),
+#     c("Adj. $R^2$",
+#       sprintf("%.3f", summary(m1_fe)$adj.r.squared),
+#       sprintf("%.3f", summary(m2_fe)$adj.r.squared),
+#       sprintf("%.3f", summary(m3_fe)$adj.r.squared))
+#   ),
+# 
+#   notes = c(
+#     "The unit of analysis is the speech chunk.",
+#     "All models include year, committee, and topic fixed effects (coefficients omitted).",
+#     "House majority is assigned based on congressional control in the year of the hearing.",
+#     "OLS estimates with standard errors in parentheses."
+#   ),
+#   notes.align = "l"
+# )
+# 
+# 
+
+
+# 
+# # hearing as unit of analysis
+# 
+# 
+# 
+# 
+# 
+# 
+# mode_nonmissing <- function(x) {
+#   x <- x[!is.na(x)]
+#   if (length(x) == 0) return(NA_integer_)
+#   ux <- unique(x)
+#   ux[which.max(tabulate(match(x, ux)))]
+# }
+# 
+# first_nonmissing <- function(x) {
+#   x <- x[!is.na(x)]
+#   if (length(x) == 0) return(NA)
+#   x[[1]]
+# }
+# 
+# df_hearing <- df %>%
+#   group_by(packageId) %>%
+#   summarise(
+#     mean_score = mean(mean_score, na.rm = TRUE),
+#     year = mode_nonmissing(as.integer(year)),
+# 
+#     dem_prop = mean(dem == 1, na.rm = TRUE),
+#     minority_prop = mean(minority == 1, na.rm = TRUE),
+#     seniority_rs_mean = mean(seniority_rs, na.rm = TRUE),
+# 
+#     house_maj = first_nonmissing(house_maj),
+#     .groups = "drop"
+#   )
+# 
+# 
+# 
+# # Load control table
+# house_control <- read.csv(paste(here(),"data","congress_control.csv",sep="/")) %>%
+#   mutate(
+#     start_year = as.integer(start_year),
+#     end_year   = as.integer(end_year)
+#   )
+# 
+# # Append house majority ONLY where missing
+# df_hearing <- df_hearing %>%
+#   mutate(year = as.integer(year)) %>%
+#   left_join(
+#     house_control,
+#     by = join_by(year >= start_year, year < end_year)
+#   ) %>%
+#   mutate(
+#     house_maj = ifelse(
+#       is.na(house_maj),
+#       majority_party,
+#       house_maj
+#     )
+#   ) %>%
+#   select(-start_year, -end_year, -congress, -majority_party)
+# 
+# 
+# 
+# sapply(
+#   df_hearing[, c("mean_score", "dem_prop", "house_maj",
+#                 "minority_prop", "seniority_rs_mean", "year")],
+#   function(x) sum(is.na(x))
+# )
+# 
+# 
+# # Run models
+# m1 <- lm(mean_score ~ dem_prop + house_maj + minority_prop + factor(year),
+#          data = df_hearing)
+# 
+# m2 <- lm(mean_score ~ dem_prop + house_maj + minority_prop +
+#            seniority_rs_mean + factor(year),
+#          data = df_hearing)
+# 
+# m3 <- lm(mean_score ~ dem_prop * seniority_rs_mean +
+#            house_maj + minority_prop + factor(year),
+#          data = df_hearing)
+# 
+# 
+# 
+# # Display only the main covariates (omit year FE dummies)
+# keep_order <- c(
+#   "dem_prop",
+#   "house_maj",
+#   "minority_prop",
+#   "seniority_rs_mean",
+#   "dem_prop:seniority_rs_mean"
+# )
+# 
+# cov_labels <- c(
+#   "Democratic Proportion",
+#   "House Majority",
+#   "Minority Proportion",
+#   "Mean Seniority (Rescaled)",
+#   "Democratic Proportion × Mean Seniority (Rescaled)"
+# )
+# 
+# stargazer(
+#   m1, m2, m3,
+#   type = "latex",
+#   dep.var.labels = "Empirical Score",
+#   title = "Regression Results",
+#   label = "tab:regression_results",
+#   align = TRUE,
+#   no.space = TRUE,
+#   star.cutoffs = c(0.05, 0.01, 0.001),
+#   digits = 3,
+# 
+#   keep = keep_order,
+#   order = keep_order,
+#   covariate.labels = cov_labels,
+# 
+#   omit = "factor\\(year\\)",
+#   omit.stat = c("f", "ser", "n", "rsq", "adj.rsq"),
+# 
+#   out = file.path(path, "plots", "regression_results_hearing_unit.tex"),
+# 
+#   add.lines = list(
+#     c("Year fixed effects", "Yes", "Yes", "Yes"),
+#     c("Seniority Control", "No", "Yes", "Yes"),
+#     c("Interaction Terms", "No", "No", "Yes"),
+#     c("Observations",
+#       format(nobs(m1), big.mark = ","),
+#       format(nobs(m2), big.mark = ","),
+#       format(nobs(m3), big.mark = ",")),
+#     c("$R^2$",
+#       sprintf("%.3f", summary(m1)$r.squared),
+#       sprintf("%.3f", summary(m2)$r.squared),
+#       sprintf("%.3f", summary(m3)$r.squared)),
+#     c("Adj. $R^2$",
+#       sprintf("%.3f", summary(m1)$adj.r.squared),
+#       sprintf("%.3f", summary(m2)$adj.r.squared),
+#       sprintf("%.3f", summary(m3)$adj.r.squared))
+#   ),
+# 
+#   notes = c(
+#     "Unit of analysis is the hearing.",
+#     "Democratic Proportion and Minority Proportion are computed within each hearing.",
+#     "All models include year fixed effects (coefficients omitted) and report OLS estimates with standard errors in parentheses."
+#   ),
+#   notes.align = "l"
+#   # If you want ONLY these notes (and not the default significance legend), uncomment:
+#   # , notes.append = FALSE
+# )
+# 
+
+
+```
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+
+
+# ---------- Minimal robust manual LaTeX table using explicit rows -------------
+# REQUIREMENTS: coef_char and se_char exist and are lists (one element per model),
+# each a named character vector containing exactly the keys in 'rows'.
+# rows and row_labels are the explicit vectors you showed and must be used.
+
+rows <- c("(Intercept)", "dem", "house_maj_d", "minority", "seniority_rs", "minority:seniority_rs")
+row_labels <- c("Intercept", "Party (D)", "House Control (D)", "Minority Status",
+                "Seniority", "Seniority \\times Minority")
+nmodels <- length(coef_char)  # should be 5
+
+# Basic safety checks
+stopifnot(length(coef_char) == length(se_char))
+stopifnot(all(sapply(coef_char, function(ch) all(rows %in% names(ch)))))
+
+# Helper: produce a cell (space for blanks)
+cell <- function(x) if (is.null(x) || nchar(x) == 0) " " else x
+
+# Build the table lines (only the body; you can keep your header/footer)
+lines <- character()
+lines <- c(lines, "% Table generated (explicit-rows safe)")
+lines <- c(lines, "\\begin{table}[!htbp] \\centering")
+lines <- c(lines, "  \\caption{Regression Results}")
+lines <- c(lines, "  \\label{tab:main_regressions}")
+lines <- c(lines, "  \\begin{tabular}{@{\\extracolsep{5pt}}lD{.}{.}{-3} D{.}{.}{-3} D{.}{.}{-3} D{.}{.}{-3} D{.}{.}{-3}}")
+lines <- c(lines, "  \\\\[-1.8ex]\\hline")
+lines <- c(lines, "  \\hline \\\\[-1.8ex]")
+lines <- c(lines, paste0("  & \\multicolumn{", nmodels, "}{c}{\\textit{Dependent variable:}} \\\\"))
+lines <- c(lines, "  \\cline{2-6}")
+lines <- c(lines, paste0("  \\\\[-1.8ex] & \\multicolumn{", nmodels, "}{c}{Empirical Score} \\\\"))
+lines <- c(lines, paste0("  \\\\[-1.8ex] & ", paste0(sprintf("\\multicolumn{1}{c}{(%d)}", 1:nmodels), collapse = " & "), " \\\\"))
+lines <- c(lines, "  \\hline \\\\[-1.8ex]")
+
+# Body: for each requested row, print coef line then se line
+for (r in seq_along(rows)) {
+  label <- row_labels[r]
+  coefs <- vapply(coef_char, function(ch) cell(ch[ rows[r] ]), FUN.VALUE = "")
+  ses   <- vapply(se_char,   function(ch) cell(ch[ rows[r] ]), FUN.VALUE = "")
+  lines <- c(lines, paste0("  ", label, " & ", paste(coefs, collapse = " & "), " \\\\"))
+  lines <- c(lines, paste0("   & ", paste(ses, collapse = " & "), " \\\\"))
+}
+
+# Footer lines (kept minimal)
+lines <- c(lines, "  \\hline \\\\[-1.8ex]")
+lines <- c(lines, "  \\textit{Note:}  & \\multicolumn{5}{l}{$^{*}$p$<$0.05; $^{**}$p$<$0.01; $^{***}$p$<$0.001} \\\\")
+lines <- c(lines, "  \\end{tabular}")
+lines <- c(lines, "\\end{table}")
+
+writeLines(lines, con = texfile)
+cat('Wrote corrected LaTeX table to:', texfile, '\n')
+# --------------------------------------------------------------------------
+
+```
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+
+
+
+
+
+# Perform regression 
+
+m1 <- lm(mean_score ~ dem + house_maj + minority + year,data=df)
+m2 <- lm(mean_score ~ dem + house_maj + minority + minority_prop + year,data=df)
+m3 <- lm(mean_score ~ dem + house_maj + minority + minority_prop + dem*minority_prop+ year,data=df)
+m4 <- lm(mean_score ~ dem + house_maj + minority + minority_prop + seniority + year,data=df)
+m5 <- lm(mean_score ~ dem + house_maj + minority + minority_prop + seniority + dem*seniority+ year,data=df)
+
+
+
+# Custom labels for coefficients
+custom_labels <- c(
+  "(Intercept)" = "Intercept",
+  "year" = "Year",
+  "congress_hearings" = "Congress Session",
+#  "pres_partyR" = "President's Party (R)",
+#  "house_majR" = "House Majority (R)",
+  "divided_house" = "Divided House",
+  "divided_senate" = "Divided Senate",
+  "dem_dw" = "Committtee Ideology (R)",
+  "median_floor" = "Polarization of Floor",
+  "chair_dw" = "Chair's Ideology (R)",
+  "dem" = "Member's Party (D)",
+  "minority" = "Minority Status",
+  "seniorty" = "Member's Seniority",
+  "type_legislative" = "Legislative Hearing",
+  "bill" = "Specific Bill Considered",
+  "class_const" = "Constitutional Hearing",
+  "cmt_govtrackAppropriations" = "Appropriations Committee",
+  "cmt_govtrackArmed Services" = "Armed Services Committee",
+  "cmt_govtrackBanking and Currency" = "Banking and Currency Committee",
+  "cmt_govtrackBudget" = "Budget Committee",
+  "cmt_govtrackEducation and Labor" = "Education and Labor Committee",
+  "cmt_govtrackForeign Affairs" = "Foreign Affairs Committee",
+  "cmt_govtrackGovernment Operations" = "Government Operations Committee",
+  "cmt_govtrackHouse Administration" = "House Administration Committee",
+  "cmt_govtrackInterior and Insular Affairs" = "Interior and Insular Affairs Committee",
+  "cmt_govtrackInterstate and Foreign Commerce" = "Interstate and Foreign Commerce Committee",
+  "cmt_govtrackJudiciary" = "Judiciary Committee",
+  "cmt_govtrackPublic Works" = "Public Works Committee",
+  "cmt_govtrackRules" = "Rules Committee",
+  "cmt_govtrackScience and Astronautics" = "Science and Astronautics Committee",
+  "cmt_govtrackSmall Business" = "Small Business Committee",
+  "cmt_govtrackVeterans' Affairs" = "Veterans' Affairs Committee",
+  "cmt_govtrackWays and Means" = "Ways and Means Committee",
+  "majortopic2Agriculture" = "Topic: Agriculture",
+  "majortopic2Civil Rights" = "Topic: Civil Rights",
+  "majortopic2Defense" = "Topic: Defense",
+  "majortopic2Domestic Commerce" = "Topic: Domestic Commerce",
+  "majortopic2Education" = "Topic: Education",
+  "majortopic2Energy" = "Topic: Energy",
+  "majortopic2Environment" = "Topic: Environment",
+  "majortopic2Foreign Trade" = "Topic: Foreign Trade",
+  "majortopic2Government Operations" = "Topic: Government Operations",
+  "majortopic2Health" = "Topic: Health",
+  "majortopic2Housing" = "Topic: Housing",
+  "majortopic2Immigration" = "Topic: Immigration",
+  "majortopic2International Affairs" = "Topic: International Affairs",
+  "majortopic2Labor" = "Topic: Labor",
+  "majortopic2Law and Crime" = "Topic: Law and Crime",
+  "majortopic2Macroeconomics" = "Topic: Macroeconomics",
+  "majortopic2Public Lands" = "Topic: Public Lands",
+  "majortopic2Social Welfare" = "Topic: Social Welfare",
+  "majortopic2Technology" = "Topic: Technology",
+  "majortopic2Transportation" = "Topic: Transportation"
+)
+
+
+stargazer(
+  regression_result,
+  type = "latex",  # Output as LaTeX code
+  dep.var.labels = "Empirical Score",  # Set new dependent variable name
+  covariate.labels = custom_labels,  # Custom labels for covariates
+  out = paste(path, "plots", "regression_results.latex", sep = '/'),  # Save to file
+  title = "Regression Results",
+  label = "tab:regression_results",
+  align = TRUE,
+  no.space = TRUE,
+  star.cutoffs = c(0.05, 0.01, 0.001),  # Significance stars
+  digits = 3,
+#  omit = c("majortopic2", "cmt_govtrack"),  # Exclude variables from display
+  add.lines = list(
+    c("Topic Controls", "Yes"),  # Add custom row
+    c("Committee Controls", "Yes")  # Add custom row
+  )
+)
+
+
+# Extract coefficients and confidence intervals
+coefficients <- tidy(regression_result, conf.int = TRUE)
+
+# Map custom labels to the term column and remove the intercept
+coefficients <- coefficients %>%
+  filter(term != "(Intercept)") %>%  # Remove the intercept
+  mutate(term = recode(term, !!!custom_labels)) %>%  # Apply custom labels
+  mutate(term = factor(term, levels = rev(term)))  # Reverse the order
+
+coefficients
+# Create the plot
+coef_plot <- ggplot(coefficients, aes(y = term, x = estimate)) +
+  geom_point(size = 3) +
+  geom_errorbarh(aes(xmin = conf.low, xmax = conf.high), height = 0.2) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
+  # Add vertical line at x=0
+  scale_x_continuous(
+    breaks = seq(-0.05, 0.05, by = 0.025),  # Custom x-axis ticks
+    limits = c(-0.05, 0.05)                # Ensure axis spans this range
+  ) +
+  labs(
+    y = "Coefficient",
+    x = "Estimate") +
+  theme_minimal()
+
+
+# save the plot
+ggsave(paste(path,"plots","regression_coef_plot.png",sep = "/"),
+  coef_plot, width = 8, height = 8, dpi = 300)
+
+
+
+```
+
+
+
+
+# categories
+
+```{r include=FALSE}
+
+combined_df <- combined_df %>%
+  mutate(
+    empirical_category = ifelse(
+      str_trim(empirical_category) %in% c("", "***"), 
+      list(0),  # If empty or "***", set to 0
+      str_split(empirical_category, " \\*\\*\\*\\*\\* ") # Split by "*****"
+    )
+  ) %>%
+  mutate(
+    empirical_category = ifelse(
+      str_trim(empirical_category) %in% c("", "***"), 
+      list(0),  # If empty or "***", set to 0
+      str_split(empirical_category, ",") # Split by ","
+    )
+  )
+
+
+unique_values <- combined_df %>%
+  pull(empirical_category) %>%  # Extract the transformed variable as a list
+  unlist() %>%                # Flatten the list
+  unique()       
+
+# Clean unique_values
+unique_values <- unique_values %>%
+  str_remove("^c\\(") %>%        # Remove "c(" at the start
+  str_remove_all("[^a-zA-Z0-9 ]") %>%  # Remove special characters
+  str_trim() %>%                 # Trim leading/trailing whitespace
+  unique()   
+
+combined_df <- combined_df %>%
+  mutate(
+    !!!setNames(
+      map(unique_values, 
+          ~ as.integer(map_lgl(combined_df$empirical_category, function(x) any(.x %in% x)))),
+      paste0("category_", unique_values)
+    )
+  )
+
+
+category_columns <- grep("^category_", names(combined_df), value = TRUE)
+category_columns <- setdiff(category_columns, "category_0")
+
+averaged_df <- combined_df %>%
+  group_by(file_name) %>%
+  summarise(across(all_of(category_columns), mean, na.rm = TRUE)) 
+
+# Create a long-format DataFrame for plotting
+plot_df <- averaged_df %>%
+  summarise(across(all_of(category_columns), mean, na.rm = TRUE)) %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = "category",
+    values_to = "average"
+  ) %>%
+  mutate(category = gsub("^category_", "", category))
+
+# Create the plot
+ggplot(plot_df, aes(x = category, y = average)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  theme_minimal() +
+  labs(
+    title = "Average by Category",
+    x = "Category",
+    y = "Average Value"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+
+```
+
+
+```{r include=FALSE}
+a <- df %>%
+# filter(cmt_govtrack == "Public Works")%>%
+# filter(class_const_2==1)%>%
+# filter(hearing == "CHRG-105hhrg38711") %>% 
+  arrange(hearing,rownumber) %>%
+  group_by(hearing) %>%
+  mutate(rownumber = row_number()) %>%
+  ungroup()
+
+
+## heatmap
+g <- a %>%
+  filter(class_const_3==1) %>%
+  filter(type_legislative==0) %>%
+  ggplot(aes(x = rownumber, y = as.factor(hearing), fill = mean_score)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "red", name = "Empirical Score") +
+  labs(
+      title = "Heatmap of Discussion Progression: Constitutional Hearings",
+    x = "Progression of Speech (Rows)",
+    y = "Hearing"
+  ) +
+  theme_minimal() +
+  theme(
+     axis.text.y = element_blank(),  # Remove y-axis text
+    axis.ticks.y = element_blank(),  # Remove y-axis ticks
+    legend.position = "right"              # Place legend on the right
+  )
+
+ggsave(paste0(path,"/plots/","heatmap_const.png"),
+  g,
+  width = 8,
+  height = 6,
+  dpi = 300)
+
+
+
+
+
+
+
+
+
+### ridgeline plot
+create_ridgeline_plot <- function(data, grouping_var, score_var = "mean_score", row_var = "rownumber") {
+  library(ggridges)
+
+  # Check if the grouping variable exists in the dataset
+  if (!grouping_var %in% colnames(data)) {
+    stop(paste("Grouping variable", grouping_var, "does not exist in the dataset."))
+  }
+  
+  # Check if row_var exists, reset if necessary
+  if (!row_var %in% colnames(data)) {
+    stop(paste("Row variable", row_var, "does not exist in the dataset."))
+  }
+  
+  # Create the ridgeline plot
+  g <- ggplot(data, aes_string(x = row_var, y = paste0("as.factor(", grouping_var, ")"), 
+                          height = score_var, group = grouping_var, fill = grouping_var)) +
+    geom_density_ridges(stat = "identity", scale = 1) +
+    scale_fill_viridis_d(name = grouping_var) +  # Dynamic legend label
+    labs(
+      title = paste("Ridgeline Plot of Discussion Progression by", grouping_var),
+      x = "Progression of Speech",
+      y = grouping_var
+    ) +
+    theme_minimal() +
+    theme(
+      legend.position = "right",          # Legend on the right
+      axis.text.y = element_text(size = 10),  # Customize y-axis text
+      axis.text.x = element_text(size = 10),  # Customize x-axis text
+      axis.title.x = element_text(size = 12), # Customize x-axis label
+      axis.title.y = element_text(size = 12)  # Customize y-axis label
+    )
+  
+  ggsave(paste0(path,"/plots/","ridgeline_",grouping_var,".png"),
+  g,
+  width = 8,
+  height = 6,
+  dpi = 300)
+
+}
+
+create_ridgeline_plot(a, grouping_var = "type")
+
+
+
+
+
+
+a %>%
+  ggplot(aes(x = rownumber, y = mean_score)) +
+  geom_line(color = "blue") +
+  geom_point(size = 1) +
+  labs(
+    title = "Discussion Progression",
+    x = "Row ID (Progression of Speech)",
+    y = "Empirical Score"
+  ) +
+  theme_minimal()
+
+
+a %>% ggplot(aes(x = rownumber, y = mean_score, color = mean_score)) +
+  geom_point(size = 2) +
+  scale_color_gradient(low = "blue", high = "red") +
+  labs(
+    title = "Discussion Progression (Color by Score)",
+    x = "Row ID (Progression of Speech)",
+    y = "Score"
+  ) +
+  theme_minimal()
+```
+
+
+
+# look at committee seniority 
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+library(effects)
+library(sjPlot)
+library(interactions)
+
+m <- lm(mean_score~minority*dem,data = df)
+
+
+interaction_dem <- plot_model(m, type = "int", terms = c("minority", "dem"))
+
+ggsave(
+    filename = paste0(path, "/plots/interaction_dem_plot.png"),
+    plot = interaction_dem,
+    width = 8,
+    height = 6,
+    dpi = 300
+  )
+
+
+plot_model(
+  lm(mean_score~average_freq_ver5*type,data = df),
+           type = "int", terms = c("average_freq_ver5", "type"))
+
+
+# Get the interaction effect
+interaction_effect <- effect("minority*dem", m)
+
+# Plot the effect
+plot(interaction_effect)
+
+
+
+
+
+#Look at committee seniority and tenure, capcity
+
+ # "minority"                              
+ # [16] "unified"                                "minuni"                                 "partyloyalty"                          
+ # [19] "votepct100"                             "votepct_sq100"                          "seniority_rs"                          
+ # [22] "seniority_sq_rs"                        "abs_dwnom1_rs"                          "dem"                                   
+ # [25] "freshman"                               "female"                                 "chairspeech"                           
+ # [28] "rankmemspeech"                          "leader"                                 "salience"                              
+ # [31] "salience_rs"                            "polar"                                  "polar_rs"         
+
+m <- lm(mean_score~seniority_rs*minority,data = df)
+
+# Extract data from plot_model
+#lot_data <- plot_model(m, type = "int", terms = c("minority", "seniority_rs"), return.data = TRUE)
+
+
+plot_data <- get_model_data(m, type = "int", terms = c("minority", "seniority_rs"))
+
+# Clean and relabel
+plot_data <- plot_data %>%
+  mutate(
+    group_label = ifelse(group_col == 0, "Majority", "Minority")
+  )
+
+# Rebuild plot manually
+interaction_senior <- ggplot(plot_data, aes(x = x, y = predicted, color = group_label, linetype = group_label)) +
+  geom_line(size = 1) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high, fill = group_label), alpha = 0.2, color = NA) +
+  scale_color_manual(values = c("Majority" = "black", "Minority" = "black")) +
+  scale_fill_manual(values = c("Majority" = "black", "Minority" = "black")) +
+  scale_linetype_manual(values = c("Majority" = "solid", "Minority" = "dashed")) +
+  labs(
+    x = "Seniority",
+    y = "Empirical Score",
+    color = NULL,
+    fill = NULL,
+    linetype = NULL
+  ) +
+  theme_minimal()
+
+ggsave(
+    filename = paste0(path, "/plots/interaction_senior.png"),
+    plot = interaction_senior,
+    width = 8,
+    height = 6,
+    dpi = 300
+  )
+```
+
+```{r include=FALSE}
+# Define the variables to plot
+class_const_vars <- paste0("class_const_", 1:5)
+
+# Loop through each variable to create and save plots
+bar_data <- df %>%
+  filter(!is.na(cmt_govtrack)) %>%  # Remove rows with missing committees
+  group_by(cmt_govtrack, class_const_5) %>%
+  summarise(
+  hearings_count = n_distinct(hearing),  # Count unique hearings
+    .groups = "drop"
+  ) %>%
+  # Ensure all combinations of cmt_govtrack and class_const_3 are present
+  complete(cmt_govtrack, class_const_5, fill = list(hearings_count = 0)) %>%
+  group_by(cmt_govtrack) %>%
+  mutate(total_hearings = sum(hearings_count)) %>%
+  arrange(total_hearings) %>%
+  mutate(cmt_govtrack = factor(cmt_govtrack, levels = unique(cmt_govtrack)))  # Set factor levels
+
+g <- ggplot(bar_data, aes(x = cmt_govtrack, y = hearings_count, fill = as.factor(class_const_5))) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
+  scale_fill_manual(
+    values = c("0" = "blue", "1" = "red"),
+    labels = c("0" = "Non-Constitutional", "1" = "Constitutional")
+  ) +
+  labs(
+    title = "Hearings by Committees: Constitutional Subject Matter",
+    x = "Committees",
+    y = "Number of Hearings",
+    fill = "Constitutional Subject Matter"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.title = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1),  # Rotate x-axis labels
+    legend.position = "right"                          # Place legend on the right
+  ) + scale_x_discrete(limits = unique(bar_data$cmt_govtrack))
+  
+  # Save each plot with a unique filename
+ggsave(
+    filename = paste0(path, "/plots/", "class_const_5", "_barplot.png"),
+    plot = g,
+    width = 8,
+    height = 6,
+    dpi = 300
+  )
+```
+
+
+# speech lag
+```{r include=FALSE}
+library(ggeffects)
+library(lme4)
+
+
+a <- df %>%
+  arrange(hearing, rownumber) %>%
+  group_by(hearing) %>%
+  mutate(empirical_score = mean_score,
+    lag_empirical_score = lag(empirical_score))
+
+a <- a %>%
+  mutate(empirical_change = empirical_score - lag_empirical_score)
+
+model <- lmer(empirical_change ~ lag_empirical_score * dem * minority +
+                (1 | hearing), data = a)
+
+plot(model)
+qqnorm(resid(model))
+qqline(resid(model))
+
+
+plot(ggpredict(model, terms = c("lag_empirical_score", "dem", "minority")))
+
+a %>%
+  mutate(dem = as.factor(dem)) 
+
+g <- ggplot(a, aes(x = lag_empirical_score, y = empirical_change)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", alpha = 0.2) +
+  labs(
+       x = "Lagged Empirical Score", y = "Empirical Score Change")
+
+g
+ggsave(
+    filename = paste0(path, "/plots/","lag_empirical_score.png"),
+    plot = g,
+    width = 8,
+    height = 6,
+    dpi = 300
+  )
+
+```
+
+
+```{r include=FALSE}
+
+party_control <- tibble(
+  start_year = c(1996, 2007, 2011), 
+  end_year = c(2007, 2011, 2017), 
+  majority_party = c("R", "D", "R")
+)
+
+
+g <- df %>%
+  filter(!is.na(minority)) %>%
+  filter(!is.na(majority_party)) %>%
+  mutate(
+    minority = as.factor(if_else(minority == 1, "Minority", "Majority"))  # Replace 1 with Minority, 0 with Majority
+  ) %>%
+  group_by(hearing, minority, year, bill) %>%  # Include bill in grouping
+  summarise(mean_empirical = mean(mean_score, na.rm = TRUE), .groups = "drop") %>%
+  group_by(minority, year, bill) %>%
+  summarise(empirical = mean(mean_empirical, na.rm = TRUE), .groups = "drop") %>%
+  ggplot(aes(y = empirical, x = year, group = minority)) +
+  geom_point(aes(x = year + 0.5, shape = minority), size = 2) +  # Shift points leftward by 0.5
+  geom_smooth(aes(x = year + 0.5, linetype = minority), color = "black", se = TRUE) +  # Black lines with SE and line types
+  geom_rect(
+    data = party_control,  # Use broader ranges for shading
+    aes(
+      xmin = start_year, xmax = end_year,  # Use start and end year for ranges
+      ymin = -Inf, ymax = Inf, 
+      fill = majority_party
+    ),
+    inherit.aes = FALSE,
+    alpha = 0.2  # Transparency for shading
+  ) +
+  scale_x_continuous(breaks = custom_ticks) +  # Custom tick marks for years
+  scale_shape_manual(
+    values = c("Minority" = 17, "Majority" = 16),  # Custom shapes for points
+    name = "Committee Control"
+  ) +
+  scale_linetype_manual(
+    values = c("Minority" = "dashed", "Majority" = "solid"),  # Different line types
+    name = "Committee Control"
+  ) +
+  scale_fill_manual(
+    values = c("D" = "blue", "R" = "red"),  # Shading for Majority party
+    name = "House Control"  # Legend title for shading
+  ) +
+  labs(
+    x = "Year",
+    y = "Empirical Score"
+  ) +
+  facet_wrap(~ bill, labeller = as_labeller(c(`0` = "No Bill", `1` = "Bill on Table"))) +  # Facet based on bill
+  theme_minimal()
+
+ggsave(
+    filename = paste0(path, "/plots/minority_byspecificbill_plot.png"),
+    plot = g,
+    width = 8,
+    height = 6,
+    dpi = 300
+  )
+
+
+# Process data
+df_diff <- df %>%
+  filter(type_legislative==1) %>%
+  filter(!is.na(minority)) %>%
+  filter(!is.na(majority_party)) %>%
+  mutate(
+    minority = as.factor(if_else(minority == 1, "Minority", "Majority"))  # Replace 1 with Minority, 0 with Majority
+  ) %>%
+  group_by(hearing, minority, year, bill) %>%
+  summarise(mean_empirical = mean(mean_score, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(
+    names_from = minority,
+    values_from = mean_empirical,
+    values_fill = 0  # Fill missing values with 0
+  ) %>%
+  mutate(
+    diff_empirical = Majority - Minority  # Calculate the difference
+  ) %>%
+  group_by(year, bill) %>%
+  summarise(
+    mean_diff = mean(diff_empirical, na.rm = TRUE), .groups = "drop"  # Calculate the average difference for each year and bill status
+  )
+
+g <- ggplot(df_diff, aes(x = year, y = mean_diff)) +
+  geom_point(size = 2) +  # Points without grouping
+  geom_smooth(se = TRUE, color = "black", linetype = "solid") +  # Single style for smooth lines
+  geom_rect(
+    data = party_control,
+    aes(
+      xmin = start_year, xmax = end_year,
+      ymin = -Inf, ymax = Inf, 
+      fill = majority_party
+    ),
+    inherit.aes = FALSE,
+    alpha = 0.2
+  ) +
+  scale_x_continuous(breaks = custom_ticks) +
+  scale_fill_manual(
+    values = c("D" = "blue", "R" = "red"),
+    name = "House Control"
+  ) +
+  labs(
+    x = "Year",
+    y = "Difference in Empirical Score (Majority - Minority)"
+  ) +
+  facet_wrap(~ bill, labeller = as_labeller(c(`0` = "No Bill", `1` = "Bill on Table"))) +  # Facet by bill
+  theme_minimal() +
+  theme(
+    strip.text = element_text(size = 12, face = "bold"),  # Styling for facet labels
+    panel.spacing = unit(1, "lines")  # Space between facets
+  )
+
+ggsave(
+    filename = paste0(path, "/plots/minoritydiff_byspecificbill_plot.png"),
+    plot = g,
+    width = 8,
+    height = 6,
+    dpi = 300
+  )
+
+
+
+
+g <- df %>%
+    mutate(
+    majority_party = if_else(demratio > 0.5, "Democrat", "Republican"),  # Determine majority party
+    majority_prop = if_else(demratio > 0.5, demratio, 1 - demratio),  # Proportion of the majority
+    minority_prop = 1 - majority_prop  # Proportion of the minority
+  ) %>%
+  filter(!is.na(minority)) %>%
+  filter(!is.na(majority_party)) %>%
+  mutate(
+    minority = as.factor(if_else(minority == 1, "Minority", "Majority"))  # Replace 1 with Minority, 0 with Majority
+  ) %>%
+  ggplot(aes(x = minority_prop, y = mean_score, group = minority, color = minority, linetype = minority)) +
+  geom_smooth(method = "lm", se = TRUE) +  # Use linear model for smoother lines
+  scale_color_manual(
+    values = c("Minority" = "black", "Majority" = "gray"),  # Custom colors for the groups
+    name = "House Member Group"  # Legend title for colors
+  ) +
+  scale_linetype_manual(
+    values = c("Minority" = "dashed", "Majority" = "solid"),  # Custom linetypes for the groups
+    name = "House Member Group"  # Legend title for linetypes
+  ) +
+  labs(
+    x = "Majority-Minority Control Gap",
+    y = "Empirical Score"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 10)
+  )
+
+
+g
+ggsave(
+    filename = paste0(here(), "/plots/minority_proportion.png"),
+    plot = g,
+    width = 8,
+    height = 6,
+    dpi = 300
+  )
+
+
+
+g <- df %>%
+  filter(!is.na(year)) %>%
+  group_by(year) %>%
+  summarise(
+    minority_prop = mean(minority_prop, na.rm = TRUE),
+    minority_prop_sd = ifelse(n() > 1, sd(minority_prop, na.rm = TRUE), 0), # Avoid NA for single observations
+    n = n()
+  ) %>%
+  mutate(
+    minority_prop_se = ifelse(n > 1, minority_prop_sd / sqrt(n), 0) # Avoid division by zero
+  ) %>% ggplot(aes(x = year, y = minority_prop)) +
+  # Background rectangles for party control
+  geom_rect(
+    data = party_control,
+    aes(
+      xmin = start_year, xmax = end_year,
+      ymin = -Inf, ymax = Inf, 
+      fill = majority_party
+    ),
+    inherit.aes = FALSE,
+    alpha = 0.2
+  ) +
+  scale_fill_manual(
+    values = c("D" = "blue", "R" = "red"),
+    name = "House Control"
+  ) +
+  scale_x_continuous(breaks = custom_ticks) +
+  
+  # Points and error bars with dodging for better visibility
+  geom_point(aes(x=year+0.5), size = 2) +  
+#  geom_errorbar(aes(ymin = minority_prop - minority_prop_se, 
+#                    ymax = minority_prop + minority_prop_se),
+#                width = 0.2, 
+#                position = position_dodge(width = 0.3)) + 
+  
+  # Smoothed trend line
+  geom_smooth(aes(x=year+0.5),method = "lm", se = TRUE) +
+  labs(
+    x = "Year",
+    y = "Partisan Power Balance (Minority Proportion)"
+  ) +
+  theme_minimal()
+
+
+ggsave(
+    filename = paste0(path, "/plots/minority_proportion_overtime.png"),
+    plot = g,
+    width = 8,
+    height = 6,
+    dpi = 300
+  )
+
+
+```
+
+
+
+
+
+## trifecta effects
+```{r include=FALSE}
+
+
+
+df <- df %>%
+  mutate(
+    trifecta = ifelse(divided_house == 0 & divided_senate == 0, 1, 0)
+  )
+
+df <- df %>%
+  mutate(
+    dem_in_maj = ifelse(dem == 1 & dem_maj == 1, 1, 0),
+    rep_in_maj = ifelse(dem == 0 & dem_maj == 0, 1, 0)
+  )
+
+model_party <- feols(
+  mean_score ~ trifecta * dem_in_maj + trifecta * rep_in_maj | cmt_govtrack,
+  data = df
+)
+
+
+# Extract coefficients
+tm <- tidy(model_party, conf.int = TRUE)
+vcov_mat <- vcov(model_party)
+
+# Pull coefficients
+dem_maj      <- tm$estimate[tm$term == "dem_in_maj"]
+dem_maj_tri  <- tm$estimate[tm$term == "trifecta:dem_in_maj"]
+rep_maj      <- tm$estimate[tm$term == "rep_in_maj"]
+rep_maj_tri  <- tm$estimate[tm$term == "trifecta:rep_in_maj"]
+
+# Compute standard errors of combined effects
+se_dem_combined <- sqrt(
+  vcov_mat["dem_in_maj", "dem_in_maj"] +
+  vcov_mat["trifecta:dem_in_maj", "trifecta:dem_in_maj"] +
+  2 * vcov_mat["dem_in_maj", "trifecta:dem_in_maj"]
+)
+
+se_rep_combined <- sqrt(
+  vcov_mat["rep_in_maj", "rep_in_maj"] +
+  vcov_mat["trifecta:rep_in_maj", "trifecta:rep_in_maj"] +
+  2 * vcov_mat["rep_in_maj", "trifecta:rep_in_maj"]
+)
+
+
+
+effects <- tibble(
+  condition = c(
+    "Dem Maj + Divided",
+    "Dem Maj + Trifecta",
+    "Rep Maj + Divided",
+    "Rep Maj + Trifecta"
+  ),
+  estimate = c(
+    dem_maj,
+    dem_maj + dem_maj_tri,
+    rep_maj,
+    rep_maj + rep_maj_tri
+  ),
+  se = c(
+    tm$std.error[tm$term == "dem_in_maj"],
+    se_dem_combined,
+    tm$std.error[tm$term == "rep_in_maj"],
+    se_rep_combined
+  )
+) %>%
+  mutate(
+    conf.low = estimate - 1.96 * se,
+    conf.high = estimate + 1.96 * se,
+    party = c("Dem", "Dem", "Rep", "Rep"),
+    color = c("lightblue", "blue", "pink", "red")
+  )
+
+
+
+
+g_tifecta_effects <-  ggplot(effects, aes(x = condition, y = estimate, fill = color)) +
+  geom_bar(stat = "identity", width = 0.6, color = "black") +
+  # geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  scale_fill_identity() +
+  labs(
+    title = "Effect of Majority Status on Empirical Discourse by Party & Trifecta",
+    y = "Estimated Change in Empirical Score",
+    x = NULL
+  ) +
+  theme_minimal()
+
+
+ggsave(
+    filename = paste0(path, "/plots/trifecta_effects.png"),
+    plot = g_tifecta_effects,
+    width = 8,
+    height = 6,
+    dpi = 300
+  )
+
+##########################
+
+df_summary <- df %>%
+  filter(!is.na(mean_score)) %>%
+  mutate(
+    speaker_party = ifelse(dem == 1, "Dem", "Rep"),
+    context = case_when(
+      dem_maj == 1 & trifecta == 1 ~ "Dem Maj + Trifecta",
+      dem_maj == 1 & trifecta == 0 ~ "Dem Maj + Divided",
+      dem_maj == 0 & trifecta == 1 ~ "Rep Maj + Trifecta",
+      dem_maj == 0 & trifecta == 0 ~ "Rep Maj + Divided"
+    )
+  ) %>%
+  filter(!is.na(speaker_party))
+
+
+
+group_means <- df_summary %>%
+  group_by(speaker_party, context) %>%
+  summarise(
+    mean_score = mean(mean_score),
+    sd_score = sd(mean_score),
+    n = n(),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    se = ifelse(is.na(sd_score), 0, sd_score / sqrt(n)),
+    ci_low = ifelse(is.na(sd_score), mean_score, mean_score - 1.96 * se),
+    ci_high = ifelse(is.na(sd_score), mean_score, mean_score + 1.96 * se)
+  )
+
+
+
+g_trifecta <- ggplot(group_means, aes(x = context, y = mean_score, fill = speaker_party)) +
+  geom_bar(
+    stat = "identity",
+    position = position_dodge(width = 0.7),
+    width = 0.6,
+    color = "black"
+  ) +
+  geom_errorbar(
+    aes(ymin = ci_low, ymax = ci_high),
+    position = position_dodge(width = 0.7),  # 👈 same dodge!
+    width = 0.2
+  ) +
+  scale_fill_manual(values = c("Dem" = "blue", "Rep" = "red")) +
+  labs(
+    title = "Raw Mean Empirical Score by Party & Institutional Context",
+    x = NULL,
+    y = "Empirical Score"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+
+
+ggsave(
+    filename = paste0(path, "/plots/trifecta_raw.png"),
+    plot = g_trifecta,
+    width = 8,
+    height = 6,
+    dpi = 300
+  )
+
+
+```
+
+

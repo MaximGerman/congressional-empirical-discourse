@@ -1,0 +1,431 @@
+---
+title: "causal_analysis"
+output: html_document
+date: "2025-06-10"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+path = "C:/Users/USER/Documents/empirical_evidence_corren"
+
+# Set the working directory for the whole document
+# knitr::opts_knit$set(root.dir = path)
+knitr::opts_knit$set(root.dir = here::here(path))
+```
+
+```{r include=FALSE}
+library(ggplot2)
+library(dplyr)
+library(broom)
+library(ggpubr)
+library(tidyr)
+library(gtable)
+library(grid) # for unit.pmax()
+library(gridExtra)
+library(lubridate)
+library(stargazer)
+library(vtable)
+library(stringr)
+library(lmtest)
+library(sandwich)
+library(purrr)
+library("readxl")
+library(here)
+library(haven)
+library(scales)
+library(fixest)
+library(fst)
+```
+
+
+```{r include=FALSE}
+#load(file=paste(path,"data", "df_withempirical.RData",sep = '/'))
+
+
+out <- read_fst(paste(here(),"data","out_hearings_enriched.fst",sep = '/'))
+
+df <- out
+
+unique_years <- sort(unique(na.omit(df$year)), decreasing = FALSE)
+unique_congress <- sort(unique(na.omit(df$congress)), decreasing = FALSE)
+
+custom_ticks <- unique_years[seq(1, length(unique_years), by = 2)]  # Select every 2nd year
+custom_ticks <- seq(1996, 2016, by = 2)
+
+
+# Define Congress sessions and their corresponding years
+congress_mapping <- data.frame(
+  congress = unique_congress,
+  start_year = seq(1997, by = 2, length.out = 10),
+  end_year = seq(1998, by = 2, length.out = 10)
+)
+
+# Generate custom ticks for the x-axis
+custom_labels <- paste0(custom_ticks, " (", df$congress[match(custom_ticks, df$year)],"th)")
+
+
+
+
+
+
+
+```
+
+
+
+```{r include=FALSE}
+
+# ------------------------------------------------------------------
+# 1. Relative-yea variables (unchanged)
+# ------------------------------------------------------------------
+df <- df %>%
+  filter(!is.na(year)) %>%                     # safety
+  mutate(
+    rel_year_2007 = year - 2007,
+    rel_year_2011 = year - 2011
+  )
+
+# ------------------------------------------------------------------
+# 2. Event-study regressions, restricted to ±4 years
+#    (use the `subset =` argument of feols)
+# ------------------------------------------------------------------
+event_party_2007 <- feols(
+  mean_score ~ i(rel_year_2007, dem, ref = -1) |
+    thomas_name + year,
+  data   = df,
+  subset = ~ abs(rel_year_2007) <= 3          # ← note the tilde
+)
+
+event_party_2011 <- feols(
+  mean_score ~ i(rel_year_2011, dem, ref = -1) |
+    thomas_name + year,
+  data   = df,
+  subset = ~ abs(rel_year_2011) <= 3
+)
+
+# ------------------------------------------------------------------
+# 3. Plot helper: convert relative breaks to calendar-year labels
+# ------------------------------------------------------------------
+make_year_axis <- function(rel_breaks, flip_year) {
+  scale_x_continuous(
+    breaks  = rel_breaks,
+    labels  = rel_breaks + flip_year,         # convert to calendar
+    name    = "Calendar year"
+  )
+}
+
+# ------------------------------------------------------------------
+# 4. Plot: 2007 Democratic flip
+# ------------------------------------------------------------------
+# 2007 flip plot
+# Extract coefficients as a data frame
+coef_df_2007 <- broom::tidy(event_party_2007, conf.int = TRUE) %>%
+  filter(grepl("^rel_year_2007", term))
+
+# Extract relative year + party info
+coef_df_2007 <- coef_df_2007 %>%
+  mutate(
+    rel_year = as.numeric(sub("rel_year_2007::(-?\\d+):.*", "\\1", term)),
+    party = sub(".*:(0|1)$", "\\1", term),
+    party = ifelse(party == "1", "Democrat", "Republican")
+  )
+
+# Now ggplot
+p2007 <- ggplot(coef_df_2007, aes(x = rel_year + 2007, y = estimate)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  scale_x_continuous(breaks = 2004:2010) +
+  labs(
+    x = "Calendar year",
+    y = "Effect on Empirical Discourse"
+  ) +
+  theme_minimal()
+
+
+
+coef_df_2011 <- broom::tidy(event_party_2011, conf.int = TRUE) %>%
+  filter(grepl("^rel_year_2011", term)) %>%
+  mutate(
+    rel_year = as.numeric(sub("rel_year_2011::(-?\\d+):.*", "\\1", term)),
+    party = sub(".*:(0|1)$", "\\1", term),
+    party = ifelse(party == "1", "Democrat", "Republican")
+  )
+
+p2011 <- ggplot(coef_df_2011, aes(x = rel_year + 2011, y = estimate)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  scale_x_continuous(breaks = 2008:2014) +
+  labs(
+    x = "Calendar year",
+    y = "Effect on Empirical Discourse")+
+  theme_minimal()
+
+
+
+# Save the plot
+ggsave(file.path(here(), "plots", "event_study_plot_2007.png"),
+       plot = p2007, width = 8, height = 6, dpi = 150)
+
+ggsave(file.path(here(), "plots", "event_study_plot_2011.png"),
+       plot = p2011, width = 8, height = 6, dpi = 150)
+
+
+# identify surviors
+
+
+count_survivors <- function(df, flip_year, rel_var) {
+
+  df %>%
+    mutate(rel_year = .data[[rel_var]]) %>%
+    filter(abs(rel_year) <= 3) %>%              # match estimation window
+    group_by(thomas_name) %>%
+    summarise(
+      party = first(dem),                       # party is time-invariant here
+      pre  = any(rel_year < 0),
+      post = any(rel_year >= 0),
+      .groups = "drop"
+    ) %>%
+    filter(pre & post) %>%                      # survivors
+    count(party) %>%
+    mutate(
+      party = ifelse(party == 1, "Democrat", "Republican"),
+      flip_year = flip_year
+    )
+}
+
+survivors_2007 <- count_survivors(df, 2007, "rel_year_2007")
+survivors_2011 <- count_survivors(df, 2011, "rel_year_2011")
+
+survivors <- bind_rows(survivors_2007, survivors_2011)
+
+
+
+count_exposed <- function(df, flip_year, rel_var) {
+
+  df %>%
+    mutate(rel_year = .data[[rel_var]]) %>%
+    filter(abs(rel_year) <= 3) %>%
+    group_by(thomas_name) %>%
+    summarise(
+      party = first(dem),
+      .groups = "drop"
+    ) %>%
+    count(party) %>%
+    mutate(
+      party = ifelse(party == 1, "Democrat", "Republican"),
+      flip_year = flip_year
+    )
+}
+
+exposed <- bind_rows(
+  count_exposed(df, 2007, "rel_year_2007"),
+  count_exposed(df, 2011, "rel_year_2011")
+)
+
+survivors
+
+exposed
+
+
+```
+
+```{r include=FALSE}
+
+# Estimate model
+event_party <- feols(
+  mean_score ~ i(year, dem, ref = 2006) | thomas_name + year,
+  data = df
+)
+
+# Extract tidy results
+tidy_event <- broom::tidy(event_party, conf.int = TRUE) %>%
+  filter(grepl("year::", term)) %>%
+  mutate(
+    year = as.numeric(sub("year::(\\d{4}).*", "\\1", term)),
+    party = "Democrat"
+  )
+
+
+g_event_study <- ggplot(tidy_event, aes(x = year, y = estimate)) +
+  geom_point() +
+  geom_point(aes(x = 2006, y = 0), shape = 21, size = 1.5, fill = "gray", stroke = 0.5)+ # reference year
+
+  # geom_line() +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_vline(xintercept = c(2007, 2011), linetype = "dashed", color = "black") +
+  annotate("text", x = 2007, y = max(tidy_event$estimate, na.rm = TRUE) + 0.01,
+           label = "Dem House Majority", angle = 90, vjust = -0.4, size = 3.5) +
+  annotate("text", x = 2011, y = max(tidy_event$estimate, na.rm = TRUE) + 0.01,
+           label = "GOP House Majority", angle = 90, vjust = -0.4, size = 3.5) +
+  scale_x_continuous(
+    breaks = sort(unique(c(seq(min(tidy_event$year), max(tidy_event$year), by = 1), 2007, 2011)))
+  ) +
+  labs(
+    title = "Event Study: Minority Status Effect by Party",
+    x = "Year",
+    y = "Effect on Empirical Score"
+  ) +
+  theme_minimal()
+
+
+
+ggsave(
+    filename = paste0(here(), "/plots/event_study_plot.png"),
+    plot = g_event_study,
+    width = 8,
+    height = 6,
+    dpi = 300
+  )
+
+
+
+```
+
+
+
+```{r include=FALSE}
+
+
+# Identify members who served all years 2003–2011
+eligible_members <- df %>%
+  filter(year %in% 2005:2009) %>%
+  group_by(thomas_name) %>%
+  summarise(years_active = n_distinct(year)) %>%
+  filter(years_active == 4)  # 2003–2011 inclusive
+
+
+
+# Subset full data
+df_subset <- df %>%
+  filter(thomas_name %in% eligible_members$thomas_name) %>%
+  mutate(post_2007 = ifelse(year >= 2007, 1, 0))
+
+
+model <- feols(
+  mean_score ~ post_2007 * dem | thomas_name,
+  data = df_subset
+)
+
+
+tm <- tidy(model, conf.int = TRUE)
+
+# Extract relevant coefficients
+rep_est      <- tm$estimate[tm$term == "post_2007"]
+rep_low      <- tm$conf.low[tm$term == "post_2007"]
+rep_high     <- tm$conf.high[tm$term == "post_2007"]
+
+dem_diff     <- tm$estimate[tm$term == "post_2007:dem"]
+dem_low_diff <- tm$conf.low[tm$term == "post_2007:dem"]
+dem_high_diff<- tm$conf.high[tm$term == "post_2007:dem"]
+
+# Compute Democrat total effect
+dem_est  <- rep_est + dem_diff
+dem_low  <- rep_low + dem_low_diff
+dem_high <- rep_high + dem_high_diff
+
+# Assemble data frame for plotting
+tidy_model <- tibble(
+  party = c("Republican", "Democrat"),
+  estimate = c(rep_est, dem_est),
+  conf.low = c(rep_low, dem_low),
+  conf.high = c(rep_high, dem_high)
+)
+
+g_2007 <- ggplot(tidy_model, aes(x = party, y = estimate, fill = party)) +
+  geom_bar(stat = "identity", width = 0.6, color = "black") +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(
+    title = "Effect of 2007 House Flip on Empirical Discourse by Party",
+    y = "Estimated Change in Empirical Score",
+    x = NULL
+  ) +
+  scale_fill_manual(values = c("Democrat" = "blue", "Republican" = "red")) +
+  theme_minimal()
+
+
+
+ggsave(
+    filename = paste0(here(), "/plots/flip_effects_2007.png"),
+    plot = g_2007,
+    width = 8,
+    height = 6,
+    dpi = 300
+  )
+
+
+
+
+
+# Identify members who served all years
+eligible_members <- df %>%
+  filter(year %in% 2009:2013) %>%
+  group_by(thomas_name) %>%
+  summarise(years_active = n_distinct(year)) %>%
+  filter(years_active == 4)  # 2003–2011 inclusive
+
+# Subset full data
+df_subset <- df %>%
+  filter(thomas_name %in% eligible_members$thomas_name) %>%
+  mutate(post_2011 = ifelse(year >= 2011, 1, 0))
+
+
+
+model <- feols(
+  mean_score ~ post_2011 * dem | thomas_name,
+  data = df_subset
+)
+
+
+tm <- tidy(model, conf.int = TRUE)
+
+# Extract relevant coefficients
+rep_est      <- tm$estimate[tm$term == "post_2011"]
+rep_low      <- tm$conf.low[tm$term == "post_2011"]
+rep_high     <- tm$conf.high[tm$term == "post_2011"]
+
+dem_diff     <- tm$estimate[tm$term == "post_2011:dem"]
+dem_low_diff <- tm$conf.low[tm$term == "post_2011:dem"]
+dem_high_diff<- tm$conf.high[tm$term == "post_2011:dem"]
+
+# Compute Democrat total effect
+dem_est  <- rep_est + dem_diff
+dem_low  <- rep_low + dem_low_diff
+dem_high <- rep_high + dem_high_diff
+
+# Assemble data frame for plotting
+tidy_model <- tibble(
+  party = c("Republican", "Democrat"),
+  estimate = c(rep_est, dem_est),
+  conf.low = c(rep_low, dem_low),
+  conf.high = c(rep_high, dem_high)
+)
+
+g_2011 <- ggplot(tidy_model, aes(x = party, y = estimate, fill = party)) +
+  geom_bar(stat = "identity", width = 0.6, color = "black") +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(
+    title = "Effect of 2011 House Flip on Empirical Discourse by Party",
+    y = "Estimated Change in Empirical Score",
+    x = NULL
+  ) +
+  scale_fill_manual(values = c("Democrat" = "blue", "Republican" = "red")) +
+  theme_minimal()
+
+
+
+ggsave(
+    filename = paste0(here(), "/plots/flip_effects_2011.png"),
+    plot = g_2011,
+    width = 8,
+    height = 6,
+    dpi = 300
+  )
+
+
+```

@@ -1,0 +1,1589 @@
+---
+title: "bills"
+output: html_document
+date: "2025-06-11"
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+path = "C:/Users/USER/Documents/empirical_evidence_corren"
+
+# Set the working directory for the whole document
+# knitr::opts_knit$set(root.dir = path)
+knitr::opts_knit$set(root.dir = here::here(path))
+```
+
+```{r include=FALSE}
+library(ggplot2)
+library(dplyr)
+library(broom)
+library(ggpubr)
+library(tidyr)
+library(gtable)
+library(grid) # for unit.pmax()
+library(gridExtra)
+library(lubridate)
+library(stargazer)
+library(vtable)
+library(stringr)
+library(lmtest)
+library(sandwich)
+library(purrr)
+library("readxl")
+library(here)
+library(haven)
+library(scales)
+library(fixest)
+library(ggpattern)
+library(fst)
+
+```
+
+
+```{r include=FALSE}
+#load(file=paste(here(),"data", "df_withempirical.RData",sep = '/'))
+
+out <- read_fst(paste(here(),"data","out_hearings_enriched.fst",sep = '/'))
+
+df <- out
+
+unique_years <- sort(unique(na.omit(df$year)), decreasing = FALSE)
+unique_congress <- sort(unique(na.omit(df$congress)), decreasing = FALSE)
+
+custom_ticks <- unique_years[seq(1, length(unique_years), by = 2)]  # Select every 2nd year
+custom_ticks <- seq(1996, 2016, by = 2)
+
+
+# Define Congress sessions and their corresponding years
+congress_mapping <- data.frame(
+  congress = unique_congress,
+  start_year = seq(1997, by = 2, length.out = 10),
+  end_year = seq(1998, by = 2, length.out = 10)
+)
+
+# Generate custom ticks for the x-axis
+custom_labels <- paste0(custom_ticks, " (", df$congress[match(custom_ticks, df$year)],"th)")
+
+
+
+```
+
+
+
+
+
+
+# merge data
+```{r include=FALSE}
+ df_bills <- read.csv(paste(here(),"data", "df_bills.csv",sep = '/'))
+
+
+
+df_merged <- df %>%
+  filter(bill == 1) %>%
+  separate_rows(bill_number, sep = ";") %>%
+  mutate(bill_number = str_trim(bill_number)) %>%
+  left_join(df_bills, by = "bill_number")
+
+
+save(df_merged, file=paste(here(),"data", "df_with_bill_sponsors.RData",sep = '/'))
+```
+
+
+
+```{r include=FALSE}
+
+load(file=paste(here(),"data", "df_with_bill_sponsors.RData",sep = '/'))
+
+
+tab <- df_merged %>%
+  mutate(
+    year = as.integer(year),
+    congress = as.integer(congress.x)
+  ) %>%
+  group_by(year, congress.x) %>%
+  summarise(
+    hearings = n_distinct(packageId),
+    speeches = n_distinct(speech),
+    .groups = "drop"
+  ) %>%
+  arrange(year, congress.x) %>%
+  filter(hearings > 3) %>%
+  filter(!is.na(year), !is.na(congress.x)) %>%   # <-- DROP NA ROWS
+  mutate(
+    year = as.character(year),
+    congress = as.character(congress.x)
+  )
+
+totals <- tab %>%
+  summarise(
+    year = "Total",
+    congress = "",
+    hearings = sum(hearings),
+    speeches = sum(speeches)
+  )
+
+tab_final <- bind_rows(tab, totals)
+
+latex_table <- knitr::kable(
+  tab_final,
+  format = "latex",
+  booktabs = TRUE,
+  col.names = c("Year", "Congress", "Unique Hearings", "Unique Speech Chunks"),
+  caption = "Descriptive statistics by year and Congress."
+)
+
+
+tab_final
+
+
+```
+
+
+
+# Quantile cutoffs
+q_low <- quantile(df_merged$bipartisanship_intensity, 0.1, na.rm = TRUE)
+q_high <- quantile(df_merged$bipartisanship_intensity, 0.9, na.rm = TRUE)
+
+# Create category
+df_merged$bipartisan_category <- with(df_merged, ifelse(
+  bipartisanship_intensity <= q_low, "partisan_majority",
+  ifelse(bipartisanship_intensity >= q_high, "partisan_minority", "bipartisan")
+))
+
+
+
+df_merged <- df_merged %>%
+  mutate(
+    bipartisan_category = case_when(
+      is.na(bipartisanship_intensity) ~ NA_character_,
+      bipartisanship_intensity <= 0.10 ~ "partisan_majority",
+      bipartisanship_intensity >= 0.90 ~ "partisan_minority",
+      bipartisanship_intensity > 0.45 & bipartisanship_intensity < 0.55 ~ "bipartisan",
+      TRUE ~ "other"
+    )
+  )
+
+
+df_merged$bipartisan_category = relevel(factor(df_merged$bipartisan_category), ref = "partisan_minority")
+#
+# df_merged <- df_merged %>%
+#   filter(!is.na(sponsor_party)) %>%
+#   filter(sponsor_party %in% c('Democrat','Republican')) %>%
+#   mutate(sponsor_party = as.factor(sponsor_party))
+
+
+```
+
+
+```{r include=FALSE}
+# 
+# # Split the strings by ";", trim whitespace, and unlist into a single vector
+# bills_list <- unlist(strsplit(df$bill_number, ";"))
+# bills_list <- trimws(bills_list)  # Remove leading and trailing whitespace
+# 
+# # Remove empty strings and NA values, then get unique values
+# bills_list <- unique(bills_list[bills_list != "" & !is.na(bills_list)])
+# 
+# 
+# table(df$bill)
+# 
+# # Step 2: Match the codes to df$var1 and retrieve corresponding var2 values
+# matched_var2 <- df_bills$passed[match(bills_list, df_bills$bill_number)]
+# 
+# # Step 3: Create a list of tuples
+# result <- Map(function(code, value) list(code, value), bills_list, matched_var2)
+# 
+# # Step 4: Convert to a more readable format (optional)
+# lookup_table <- lapply(seq_along(bills_list), function(i) c(bills_list[i], matched_var2[i]))
+
+# df_long <- df %>%
+#   mutate(bill_number = if_else(bill_number=="",NA,bill_number)) %>%
+#   mutate(bill_list = strsplit(bill_number,"; ")) %>%
+#   unnest(bill_list)  # Unnest into long format
+# 
+# # Convert the lookup table to a named vector for efficient matching
+# lookup_vector <- setNames(sapply(lookup_table, `[[`, 2), sapply(lookup_table, `[[`, 1))
+# 
+# # Add the new variable `bill_passed`
+# df_long$bill_passed <- ifelse(
+#   is.na(df_long$bill_list), 
+#   NA,  # Assign NA if `bill` is NA
+#   lookup_vector[df_long$bill_list]  # Match the value from the lookup table
+# )
+# 
+# # Handle unmatched bills (set to NA if no match)
+# df_long$bill_passed[is.na(df_long$bill_passed) & !is.na(df_long$bill_list)] <- NA
+
+# df_long <- df_long %>%
+#   mutate(bill_passed = as.integer(bill_passed))
+# 
+# df_long <- df_long %>%
+#   mutate(empirical_score = mean_score)
+
+
+# # Plot for HOUSE PASSAGE
+# gg_house_pass <- df_merged %>%
+#   filter(!is.na(house_pass), !is.na(mean_score)) %>%
+#   group_by(house_pass) %>%
+#   summarise(
+#     mean_score = mean(mean_score, na.rm = TRUE),
+#     se = sd(mean_score, na.rm = TRUE) / sqrt(n()),
+#     .groups = "drop"
+#   ) %>%
+#   ggplot(aes(x = factor(house_pass), y = mean_score)) +
+#   geom_bar(stat = "identity", fill = "darkgray", width = 0.5) +
+#   geom_errorbar(aes(ymin = mean_score - se, ymax = mean_score + se), width = 0.2) +
+#   scale_x_discrete(labels = c("0" = "Failed", "1" = "Passed")) +
+#   scale_y_continuous(limits = c(0, 0.15)) +
+#   labs(x = "House Outcome", y = "Mean Empirical Score") +
+#   theme_minimal()
+# 
+# ggsave(paste(here(), "plots", "house_pass_plot.png", sep = "/"),
+#        gg_house_pass, width = 8, height = 6, dpi = 300)
+# 
+# 
+# # Plot for BECOMING LAW
+# gg_law_pass <- df_merged %>%
+#   filter(!is.na(law_pass), !is.na(mean_score)) %>%
+#   group_by(law_pass) %>%
+#   summarise(
+#     mean_score = mean(mean_score, na.rm = TRUE),
+#     se = sd(mean_score, na.rm = TRUE) / sqrt(n()),
+#     .groups = "drop"
+#   ) %>%
+#   ggplot(aes(x = factor(law_pass), y = mean_score)) +
+#   geom_bar(stat = "identity", fill = "darkgray", width = 0.5) +
+#   geom_errorbar(aes(ymin = mean_score - se, ymax = mean_score + se), width = 0.2) +
+#   scale_x_discrete(labels = c("0" = "Failed", "1" = "Passed")) +
+#   scale_y_continuous(limits = c(0, 0.15)) +
+#   labs(x = "Law Outcome", y = "Mean Empirical Score") +
+#   theme_minimal()
+# 
+# ggsave(paste(here(), "plots", "law_pass_plot.png", sep = "/"),
+#        gg_law_pass, width = 8, height = 6, dpi = 300)
+
+
+
+
+summarise_with_ci <- function(data, pass_var, outcome_label_text) {
+  data %>%
+    filter(!is.na(.data[[pass_var]]), !is.na(mean_score), !is.na(minority)) %>%
+    group_by(pass = .data[[pass_var]], minority) %>%
+    summarise(
+      mean_score = mean(mean_score, na.rm = TRUE),
+      n = sum(!is.na(mean_score)),
+      sd_score = sd(mean_score, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      # Fallback: if n<2 or sd missing, set se=0 so CI = mean
+      se = ifelse(is.na(sd_score) | n < 2, 0, sd_score / sqrt(n)),
+      # Fallback: if n<2, use z=1.96 (won't matter since se=0)
+      tcrit = ifelse(n < 2, 1.96, qt(0.975, df = n - 1)),
+      ci_low = mean_score - tcrit * se,
+      ci_high = mean_score + tcrit * se,
+      outcome_label = outcome_label_text
+    ) %>%
+    select(-sd_score)
+}
+
+house_data <- summarise_with_ci(df_merged, "house_pass", "House Passage")
+law_data   <- summarise_with_ci(df_merged, "law_pass",   "Law Passage")
+
+combined_data <- bind_rows(house_data, law_data) %>%
+  mutate(
+    pass_label = ifelse(pass == 1, "Passed", "Failed"),
+    minority_label = ifelse(minority == 1, "Minority Member", "Majority Member"),
+    minority_label = factor(minority_label, levels = c("Majority Member", "Minority Member"))
+  )
+
+gg_combined <- ggplot(combined_data, aes(x = pass_label, y = mean_score, fill = minority_label)) +
+  geom_bar(
+    stat = "identity",
+    position = position_dodge(width = 0.7),
+    width = 0.6
+  ) +
+  geom_errorbar(
+    aes(ymin = ci_low, ymax = ci_high),
+    position = position_dodge(width = 0.7),
+    width = 0.2
+  ) +
+  facet_wrap(~ outcome_label) +
+  scale_y_continuous(limits = c(0, 0.15)) +
+  scale_fill_manual(values = c("Minority Member" = "black", "Majority Member" = "gray50")) +
+  labs(
+    x = "Outcome",
+    y = "Mean Empirical Score",
+    title = "Empirical Discourse by Legislative Outcome and Speaker Status",
+    fill = NULL
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom")
+
+
+gg_house <- ggplot(
+  combined_data %>% filter(outcome_label == "House Passage"),
+  aes(x = pass_label, y = mean_score, fill = minority_label)
+) +
+  geom_bar(
+    stat = "identity",
+    position = position_dodge(width = 0.7),
+    width = 0.6
+  ) +
+  geom_errorbar(
+    aes(ymin = ci_low, ymax = ci_high),
+    position = position_dodge(width = 0.7),
+    width = 0.2
+  ) +
+  scale_y_continuous(limits = c(0, 0.15)) +
+  scale_fill_manual(
+    values = c("Minority Member" = "black", "Majority Member" = "gray50")
+  ) +
+  labs(
+    x = "Outcome",
+    y = "Mean Empirical Score",
+    title = "Empirical Discourse by House Passage and Speaker Status",
+    fill = NULL
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom")
+
+
+gg_law <- ggplot(
+  combined_data %>% filter(outcome_label == "Law Passage"),
+  aes(x = pass_label, y = mean_score, fill = minority_label)
+) +
+  geom_bar(
+    stat = "identity",
+    position = position_dodge(width = 0.7),
+    width = 0.6
+  ) +
+  geom_errorbar(
+    aes(ymin = ci_low, ymax = ci_high),
+    position = position_dodge(width = 0.7),
+    width = 0.2
+  ) +
+  scale_y_continuous(limits = c(0, 0.15)) +
+  scale_fill_manual(
+    values = c("Minority Member" = "black", "Majority Member" = "gray50")
+  ) +
+  labs(
+    x = "Outcome",
+    y = "Mean Empirical Score",
+    title = "Empirical Discourse by Law Passage and Speaker Status",
+    fill = NULL
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom")
+
+
+gg_house
+# house_data <- df_merged %>%
+#   filter(!is.na(house_pass), !is.na(mean_score), !is.na(minority)) %>%
+#   group_by(pass = house_pass, minority) %>%
+#   summarise(
+#     mean_score = mean(mean_score, na.rm = TRUE),
+#     se = sd(mean_score, na.rm = TRUE) / sqrt(n()),
+#     outcome_label = "House Passage",
+#     .groups = "drop"
+#   )
+# 
+# law_data <- df_merged %>%
+#   filter(!is.na(law_pass), !is.na(mean_score), !is.na(minority)) %>%
+#   group_by(pass = law_pass, minority) %>%
+#   summarise(
+#     mean_score = mean(mean_score, na.rm = TRUE),
+#     se = sd(mean_score, na.rm = TRUE) / sqrt(n()),
+#     outcome_label = "Law Passage",
+#     .groups = "drop"
+#   )
+# 
+# 
+# # Combine
+# combined_data <- bind_rows(house_data, law_data) %>%
+#   mutate(
+#     pass_label = ifelse(pass == 1, "Passed", "Failed"),
+#     minority_label = ifelse(minority == 1, "Minority Member", "Majority Member")
+#   )
+# 
+# # Make sure minority_label is a factor with consistent order
+# combined_data <- combined_data %>%
+#   mutate(
+#     minority_label = factor(minority_label, levels = c("Majority Member", "Minority Member"))
+#   )
+# 
+# gg_combined <- ggplot(combined_data, aes(x = pass_label, y = mean_score, fill = minority_label)) +
+#   geom_bar(
+#     stat = "identity",
+#     position = position_dodge(width = 0.7),
+#     width = 0.6
+#   ) +
+#   geom_errorbar(
+#     aes(ymin = mean_score - se, ymax = mean_score + se),
+#     position = position_dodge(width = 0.7),
+#     width = 0.2
+#   ) +
+#   facet_wrap(~ outcome_label) +
+#   scale_y_continuous(limits = c(0, 0.15)) +
+#   scale_fill_manual(
+#     values = c("Minority Member" = "black", "Majority Member" = "gray50")
+#   ) +
+#   labs(
+#     x = "Outcome",
+#     y = "Mean Empirical Score",
+#     title = "Empirical Discourse by Legislative Outcome and Speaker Status",
+#     fill = NULL
+#   ) +
+#   theme_minimal(base_size = 13) +
+#   theme(legend.position = "bottom")
+# 
+
+
+# Save the combined plot
+ggsave(
+  filename = paste(here(), "plots", "combined_passage_plot.png", sep = "/"),
+  plot = gg_combined,
+  width = 10,
+  height = 6,
+  dpi = 300
+)
+
+
+```
+
+
+```{r include=FALSE}
+
+summarise_outcome_ci <- function(data, pass_var, outcome_label_text) {
+  data %>%
+    filter(!is.na(.data[[pass_var]]), !is.na(mean_score)) %>%
+    group_by(pass = .data[[pass_var]]) %>%
+    summarise(
+      mean_score = mean(mean_score, na.rm = TRUE),
+      n = sum(!is.na(mean_score)),
+      sd_score = sd(mean_score, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      se = ifelse(is.na(sd_score) | n < 2, 0, sd_score / sqrt(n)),
+      tcrit = ifelse(n < 2, 1.96, qt(0.975, df = n - 1)),
+      ci_low = mean_score - tcrit * se,
+      ci_high = mean_score + tcrit * se,
+      outcome_label = outcome_label_text,
+      pass_label = ifelse(pass == 1, "Passed", "Failed")
+    ) %>%
+    select(-sd_score)
+}
+
+house_total <- summarise_outcome_ci(df_merged, "house_pass", "House Passage")
+law_total   <- summarise_outcome_ci(df_merged, "law_pass",   "Law Passage")
+
+combined_total <- bind_rows(house_total, law_total)
+
+gg_total <- ggplot(combined_total, aes(x = pass_label, y = mean_score)) +
+  geom_col(width = 0.6) +
+  geom_errorbar(aes(ymin = ci_low, ymax = ci_high), width = 0.2) +
+  facet_wrap(~ outcome_label) +
+  scale_y_continuous(limits = c(0, 0.15)) +
+  labs(
+    x = "Outcome",
+    y = "Mean Empirical Score",
+    title = "Empirical Discourse by Legislative Outcome"
+  ) +
+  theme_minimal(base_size = 13)
+gg_total
+
+
+ggsave(
+  paste(here(), "plots", "outcome_totals_faceted.png", sep = "/"),
+  gg_total, width = 7.5, height = 5, dpi = 300
+)
+
+
+
+gg_house <- ggplot(
+  combined_total %>% filter(outcome_label == "House Passage"),
+  aes(x = pass_label, y = mean_score)
+) +
+  geom_col(width = 0.6) +
+  geom_errorbar(
+    aes(ymin = ci_low, ymax = ci_high),
+    width = 0.2
+  ) +
+  scale_y_continuous(limits = c(0, 0.15)) +
+  labs(
+    x = "Outcome",
+    y = "Mean Empirical Score",
+    title = "Empirical Discourse by House Passage"
+  ) +
+  theme_minimal(base_size = 13)
+
+
+gg_law <- ggplot(
+  combined_total %>% filter(outcome_label == "Law Passage"),
+  aes(x = pass_label, y = mean_score)
+) +
+  geom_col(width = 0.6) +
+  geom_errorbar(
+    aes(ymin = ci_low, ymax = ci_high),
+    width = 0.2
+  ) +
+  scale_y_continuous(limits = c(0, 0.15)) +
+  labs(
+    x = "Outcome",
+    y = "Mean Empirical Score",
+    title = "Empirical Discourse by Law Passage"
+  ) +
+  theme_minimal(base_size = 13)
+
+
+ggsave(
+  paste(here(), "plots", "house_passage_plot.png", sep = "/"),
+  gg_house, width = 7, height = 5, dpi = 300
+)
+
+
+ggsave(
+  paste(here(), "plots", "law_passage_plot.png", sep = "/"),
+  gg_law, width = 7, height = 5, dpi = 300
+)
+
+
+```
+
+
+
+```{r include=FALSE}
+
+gg_bill_passed_time <- df_long %>%
+  filter(bill == 1) %>%
+  filter(!is.na(bill_passed)) %>%
+  filter(!is.na(empirical_score)) %>%
+  group_by(years, bill_passed) %>%
+  summarise(
+    mean_empirical_score = mean(empirical_score, na.rm = TRUE),
+    se = sd(empirical_score, na.rm = TRUE) / sqrt(n()),
+    .groups = "drop"
+  ) %>%
+  ggplot(aes(x = years, y = mean_empirical_score, color = factor(bill_passed), linetype = factor(bill_passed))) +
+  geom_line(size = 1) +  # Lines for each bill outcome
+  geom_ribbon(aes(ymin = mean_empirical_score - se, ymax = mean_empirical_score + se, fill = factor(bill_passed)),
+              alpha = 0.2, color = NA) +  # Confidence interval shading
+  scale_color_manual(
+    values = c("0" = "gray", "1" = "black"),
+    labels = c("0" = "Failed", "1" = "Passed"),
+    name = "Bill Outcome"
+  ) +
+  scale_linetype_manual(
+    values = c("0" = "dashed", "1" = "solid"),
+    labels = c("0" = "Failed", "1" = "Passed"),
+    name = "Bill Outcome"
+  ) +
+  scale_fill_manual(
+    values = c("0" = "gray", "1" = "black"),
+    labels = c("0" = "Failed", "1" = "Passed"),
+    name = "Bill Outcome"
+  ) +
+  labs(
+    x = "Year",
+    y = "Mean Empirical Score"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(size = 14, face = "bold"),
+    axis.title = element_text(size = 12)
+  )
+
+
+
+ggsave(paste(here(),"plots","bill_passed_time_plot.png",sep = "/"),
+  gg_bill_passed_time, width = 8, height = 6, dpi = 300)
+
+```
+
+
+```{r include=FALSE}
+
+
+# Start from your grouped summary
+df_bills_summary <- df_merged %>%
+  filter(bipartisan_category!='other') %>%
+  filter(!is.na(minority)) %>%
+  group_by(bill_number, minority) %>%
+  summarise(
+    mean_score = mean(mean_score, na.rm = TRUE),
+    n = n(),
+    sponsor_party = first(sponsor_party),
+    house_pass = first(house_pass),
+    law_pass = first(law_pass),
+    bipartisan_category = first(bipartisan_category),
+    house_maj = first(house_maj),
+    divided_house = first(divided_house),
+    divided_senate = first(divided_senate),
+    years = first(years),
+    .groups = "drop"
+  )
+
+# Pivot to wide format
+df_bills_wide <- df_bills_summary %>%
+  pivot_wider(
+    names_from = minority,
+    values_from = c(mean_score, n),
+    names_glue = "{.value}_minority{minority}"
+  )
+
+# Compute overall mean_score weighted by n
+df_bills_wide <- df_bills_wide %>%
+  mutate(
+    n_total = coalesce(n_minority0, 0) + coalesce(n_minority1, 0),
+    mean_score_overall = (
+      coalesce(mean_score_minority0, 0) * coalesce(n_minority0, 0) +
+      coalesce(mean_score_minority1, 0) * coalesce(n_minority1, 0)
+    ) / n_total
+  )
+# --- 1. Run models for both outcomes ---
+
+m_house <- lm(
+  house_pass ~ mean_score_minority0 + mean_score_minority1 +
+    sponsor_party + bipartisan_category +
+    house_maj + divided_house + divided_senate + as.factor(years),
+  data = df_bills_wide
+)
+
+m_house_int <- lm(
+  house_pass ~ 
+    (mean_score_minority0 + mean_score_minority1) * bipartisan_category +
+    sponsor_party +
+    house_maj + divided_house + divided_senate + as.factor(years),
+  data = df_bills_wide
+)
+
+m_law <- lm(
+  law_pass ~ mean_score_minority0 + mean_score_minority1 +
+    sponsor_party + bipartisan_category +
+    house_maj + divided_house + divided_senate + as.factor(years),
+  data = df_bills_wide
+)
+
+m_law_int <- lm(
+  law_pass ~ 
+    (mean_score_minority0 + mean_score_minority1) * bipartisan_category +
+    sponsor_party +
+    house_maj + divided_house + divided_senate + as.factor(years),
+  data = df_bills_wide
+)
+
+# --- 2. Stargazer Table ---
+
+custom_labels <- c(
+  "mean_score_minority0" = "Majority Member Empirical Score",
+  "mean_score_minority1" = "Minority Member Empirical Score",
+
+  # Sponsor Party Dummies
+  "sponsor_partyRepublican" = "Republican Sponsor",
+
+  # Bipartisan Category Dummies
+  "bipartisan_categorybipartisan" = "Bipartisan Sponsors",
+  "bipartisan_categorypartisan_majority" = "Majority Sponsors",
+
+  # Interactions
+  "mean_score_minority0:bipartisan_categorybipartisan" = "Majority Score × Bipartisan Sponsors",
+  "mean_score_minority0:bipartisan_categorypartisan_majority" = "Majority Score × Majority Sponsors",
+  "mean_score_minority1:bipartisan_categorybipartisan" = "Minority Score × Bipartisan Sponsors",
+  "mean_score_minority1:bipartisan_categorypartisan_majority" = "Minority Score × Majority Sponsors"
+)
+
+
+stargazer(
+  m_house, m_house_int,
+  m_law, m_law_int,
+  type = "latex",
+  column.labels = c("House Passage", "", "Signed into Law", ""),
+  dep.var.caption = "Dependent Variable:",
+  dep.var.labels.include = FALSE,
+ covariate.labels = custom_labels,
+  omit = c("house_maj", "divided_house","divided_senate","as.factor\\(years\\)"),
+  title = "Empirical Discourse and Legislative Passage",
+  label = "tab:robust_passage_models",
+  out = paste(here(), "plots", "robust_passage_models.latex", sep = "/"),
+  align = TRUE,
+  no.space = TRUE,
+  star.cutoffs = c(0.05, 0.01, 0.001),
+  digits = 3,
+  add.lines = list(
+    c("Interactions", "No", "Yes", "No", "Yes"),
+    c("Unified Government Controls", "Yes", "Yes", "Yes", "Yes"),
+    c("Year FE", "Yes", "Yes", "Yes", "Yes")
+  )
+)
+
+
+
+summary(m_house_int)
+
+preds <- ggeffects::ggpredict(m_house_int, terms = c("mean_score_minority0", "bipartisan_category"))
+
+marginal_effects_house <- ggplot(preds, aes(x = x, y = predicted, color = group)) +
+  geom_line(size = 1.1) +
+#  geom_ribbon(aes(ymin = conf.low, ymax = conf.high, fill = group), alpha = 0.2, color = NA) +
+  labs(
+    title = "Marginal Effect of Empirical Score on House Passage",
+    x = "Empirical Score",
+    y = "Predicted Probability of House Passage",
+    color = "Bipartisan Sponsorship",
+    fill = "Bipartisan Sponsorship"
+  ) +
+  theme_minimal()
+
+marginal_effects_house
+ggsave(paste(here(), "plots", "marginal_effects_house.png", sep = "/"),
+       marginal_effects_house, width = 8, height = 6, dpi = 300)
+
+
+
+preds <- ggeffects::ggpredict(m_law_int, terms = c("mean_score", "bipartisan_category"))
+
+marginal_effects_law <- ggplot(preds, aes(x = x, y = predicted, color = group)) +
+  geom_line(size = 1.1) +
+#  geom_ribbon(aes(ymin = conf.low, ymax = conf.high, fill = group), alpha = 0.2, color = NA) +
+  labs(
+    title = "Marginal Effect of Empirical Score on Law Passage",
+    x = "Empirical Score",
+    y = "Predicted Probability of House Passage",
+    color = "Bipartisan Sponsorship",
+    fill = "Bipartisan Sponsorship"
+  ) +
+  theme_minimal()
+
+
+ggsave(paste(here(), "plots", "marginal_effects_law.png", sep = "/"),
+       marginal_effects_law, width = 8, height = 6, dpi = 300)
+
+
+
+#######
+# look at minority status - we need to use the speaker-level data
+
+
+
+library(fixest)
+library(ggeffects)
+
+
+m_house_speaker_cluster <- df_merged %>%
+  filter(bipartisan_category!="other") %>%
+  feols(
+  house_pass ~ mean_score * (minority + bipartisan_category) +
+    house_maj + divided_house + divided_senate + as.factor(years),
+  cluster = ~ bill_number)
+
+
+preds <- ggpredict(
+  m_house_speaker_cluster,
+  terms = c("mean_score", "minority", "bipartisan_category")
+)
+
+# 1️⃣ Relabel facet names
+facet_labels <- c(
+  "partisan_majority" = "Majority Sponsors",
+  "bipartisan" = "Bipartisan Sponsors",
+  "partisan_minority" = "Minority Sponsors"
+)
+
+# 2️⃣ Relabel group values
+preds$group <- ifelse(preds$group == "1", "Minority Member", "Majority Member")
+
+# 3️⃣ Plot
+marginal_effects_house_bystatus <- ggplot(preds, aes(x = x, y = predicted, color = group)) +
+  geom_line(size = 1.1) +
+  facet_wrap(~ facet, ncol = 3, labeller = as_labeller(facet_labels)) +
+  labs(
+    title = "Marginal Effect of Empirical Score on House Passage (Clustered SEs)",
+    x = "Empirical Score",
+    y = "Predicted Effect on House Passage",
+    color = NULL  # Remove legend title
+  ) +
+  theme_minimal(base_size = 14) +  # Set base font size larger
+  theme(
+    legend.position = "bottom",
+    strip.text = element_text(size = 16),  # facet labels
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    legend.text = element_text(size = 14),
+    plot.title = element_text(size = 14, face = "bold")
+  ) +
+    scale_color_manual(
+    values = c("Minority Member" = "black", "Majority Member" = "gray")  # or choose your preferred colors
+  )
+
+
+ggsave(paste(here(), "plots", "marginal_effects_house_bystatus.png", sep = "/"),
+       marginal_effects_house_bystatus, width = 8, height = 6, dpi = 300)
+
+
+
+
+
+# Filter preds for Majority Sponsors
+preds_majority_sponsors <- preds %>%
+  dplyr::filter(facet == "partisan_majority")
+
+# Plot without facets
+marginal_effects_house_majority <- ggplot(preds_majority_sponsors, aes(x = x, y = predicted, color = group)) +
+  geom_line(size = 1.1) +
+  labs(
+    title = "Marginal Effect of Empirical Score on House Passage\n(Majority Sponsors, Clustered SEs)",
+    x = "Empirical Score",
+    y = "Predicted Effect on House Passage",
+    color = NULL
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "bottom",
+    strip.text = element_text(size = 16),  # facet labels
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    legend.text = element_text(size = 14),
+    plot.title = element_text(size = 14, face = "bold")
+  ) +
+  scale_color_manual(
+    values = c("Minority Member" = "black", "Majority Member" = "gray50")
+  )
+
+
+marginal_effects_house_majority
+
+
+```
+
+```{r include=FALSE}
+# 
+# gg_bipartisanship_intensity <- df_merged %>%
+#   sample_frac(0.01) %>%
+#   filter(!is.na(bipartisanship_intensity), !is.na(mean_score)) %>%
+#   ggplot(aes(x = bipartisanship_intensity, y = mean_score)) +
+#   geom_point(alpha = 0.3, color = "steelblue") +
+#   geom_smooth(method = "loess", se = TRUE, color = "darkred") +
+#   labs(
+#     x = "Bipartisanship Intensity (Minority Share of Sponsors)",
+#     y = "Mean Empirical Score",
+#     title = "Relationship Between Bipartisanship and Empirical Speech"
+#   ) +
+#   theme_minimal()
+# 
+# 
+# ggsave(paste(here(), "plots", "bipartisanship_intensity_plot.png", sep = "/"),
+#        gg_bipartisanship_intensity, width = 8, height = 6, dpi = 300)
+# 
+# 
+# gg_extremism_score <- df_merged %>%
+#     sample_frac(0.01) %>%
+#   filter(!is.na(extremism_score), !is.na(mean_score)) %>%
+#   ggplot(aes(x = extremism_score, y = mean_score)) +
+#   geom_point(alpha = 0.3, color = "steelblue") +
+#   geom_smooth(method = "loess", se = TRUE, color = "darkred") +
+#   labs(
+#     x = "Extremism_score Intensity)",
+#     y = "Mean Empirical Score",
+#     title = "Relationship Between extremism_score and Empirical Speech"
+#   ) +
+#   theme_minimal()
+# 
+# 
+# ggsave(paste(here(), "plots", "extremism_score_plot.png", sep = "/"),
+#        gg_extremism_score, width = 8, height = 6, dpi = 300)
+# 
+# 
+# 
+# 
+# df_merged %>%
+#   sample_frac(0.01) %>%
+#   group_by(sponsor_majority,bipartisan) %>%
+#   summarise(empirical = mean(mean_score,na.rm=TRUE))
+
+
+# # Calculate mean and standard deviation
+# mu <- mean(df_merged$bipartisanship_intensity, na.rm = TRUE)
+# sigma <- sd(df_merged$bipartisanship_intensity, na.rm = TRUE)
+# 
+# # Categorize using SD-based thresholds
+# df_merged$bipartisan_category <- with(df_merged, ifelse(
+#   bipartisanship_intensity < (mu - sigma), "partisan_majority",
+#   ifelse(bipartisanship_intensity > (mu + sigma), "partisan_minority", "bipartisan")
+# ))
+
+```
+
+```{r include=FALSE}
+
+# Aggregate to bill level first for all plots
+df_bill_level <- df_merged %>%
+  filter(!is.na(bipartisan_category), !is.na(sponsor_party)) %>%
+  filter(sponsor_party %in% c("Democrat", "Republican")) %>%
+  group_by(bill_number, bipartisan_category, sponsor_party, years) %>%
+  summarise(mean_score = mean(mean_score, na.rm = TRUE), .groups = "drop")
+
+# Plot 1: Total by bipartisan_category (no party breakdown)
+g_bipartisan_category_total <- df_bill_level %>%
+  group_by(bipartisan_category) %>%
+  summarise(mean_score = mean(mean_score), se = sd(mean_score)/sqrt(n()), .groups = "drop") %>%
+  ggplot(aes(x = bipartisan_category, y = mean_score)) +
+  geom_col(fill = "steelblue", width = 0.6) +
+  geom_errorbar(aes(ymin = mean_score - se, ymax = mean_score + se), width = 0.2) +
+  labs(
+    title = "Average Empirical Score by Bipartisan Category",
+    x = "Bipartisan Category",
+    y = "Mean Empirical Score"
+  ) +
+  theme_minimal()
+
+ggsave(paste(here(), "plots", "bipartisan_category_total_plot.png", sep = "/"),
+       g_bipartisan_category_total, width = 8, height = 6, dpi = 300)
+
+# Plot 2: By bipartisan_category and sponsor_party
+g_bipartisan_category <- df_bill_level %>%
+  group_by(bipartisan_category, sponsor_party) %>%
+  summarise(mean_score = mean(mean_score), se = sd(mean_score)/sqrt(n()), .groups = "drop") %>%
+  ggplot(aes(x = bipartisan_category, y = mean_score, fill = sponsor_party)) +
+  geom_col(position = position_dodge(width = 0.7), width = 0.6) +
+  geom_errorbar(aes(ymin = mean_score - se, ymax = mean_score + se),
+                position = position_dodge(width = 0.7), width = 0.2) +
+  labs(
+    title = "Average Empirical Score by Bipartisan Category and Sponsor Party",
+    x = "Bipartisan Category",
+    y = "Mean Empirical Score",
+    fill = "Sponsor Party"
+  ) +
+  theme_minimal() +
+  scale_fill_manual(values = c("Democrat" = "blue", "Republican" = "red"))
+
+ggsave(paste(here(), "plots", "bipartisan_category_plot.png", sep = "/"),
+       g_bipartisan_category, width = 8, height = 6, dpi = 300)
+
+# Plot 3: Over time by bipartisan_category and sponsor_party
+g_bipartisan_sponsor_overtime <- df_bill_level %>%
+  group_by(years, bipartisan_category, sponsor_party) %>%
+  summarise(mean_score = mean(mean_score), .groups = "drop") %>%
+  ggplot(aes(x = years, y = mean_score, color = sponsor_party, linetype = bipartisan_category)) +
+  geom_line(linewidth = 1.1) +
+  geom_point() +
+  labs(
+    title = "Empirical Score Over Time by Category and Sponsor Party",
+    x = "Year",
+    y = "Mean Empirical Score",
+    color = "Sponsor Party",
+    linetype = "Bipartisan Category"
+  ) +
+  theme_minimal() +
+  scale_color_manual(values = c("Democrat" = "blue", "Republican" = "red"))
+
+ggsave(paste(here(), "plots", "bipartisan_category_overtime.png", sep = "/"),
+       g_bipartisan_sponsor_overtime, width = 8, height = 6, dpi = 300)
+
+# Plot 4: Over time by bipartisan_category only
+g_bipartisan_sponsor_overtime_total <- df_bill_level %>%
+  group_by(years, bipartisan_category) %>%
+  summarise(mean_score = mean(mean_score), .groups = "drop") %>%
+  ggplot(aes(x = years, y = mean_score, linetype = bipartisan_category)) +
+  geom_line(linewidth = 1.1) +
+  geom_point() +
+  labs(
+    title = "Empirical Score Over Time by Bipartisan Category",
+    x = "Year",
+    y = "Mean Empirical Score",
+    linetype = "Bipartisan Category"
+  ) +
+  theme_minimal()
+
+ggsave(paste(here(), "plots", "bipartisan_category_overtime_total.png", sep = "/"),
+       g_bipartisan_sponsor_overtime_total, width = 8, height = 6, dpi = 300)
+
+
+```
+
+```{r include=FALSE}
+
+summarise_cell_ci <- function(data, pass_var) {
+  data %>%
+    filter(
+      !is.na(bipartisan_category),
+      bipartisan_category != "other",
+      !is.na(minority),
+      !is.na(.data[[pass_var]]),
+      !is.na(mean_score)
+    ) %>%
+    group_by(bipartisan_category, minority, pass = .data[[pass_var]]) %>%
+    summarise(
+      mean_score = mean(mean_score, na.rm = TRUE),
+      n = sum(!is.na(mean_score)),
+      sd_score = sd(mean_score, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      # Fallback: n<2 or sd missing => CI collapses to mean
+      se = ifelse(is.na(sd_score) | n < 2, 0, sd_score / sqrt(n)),
+      tcrit = ifelse(n < 2, 1.96, qt(0.975, df = n - 1)),
+      ci_low = mean_score - tcrit * se,
+      ci_high = mean_score + tcrit * se
+    ) %>%
+    select(-sd_score)
+}
+
+# X-axis labels for bipartisan categories
+bipartisan_labels <- c(
+  partisan_minority = "Minority Sponsors",
+  bipartisan = "Bipartisan Sponsors",
+  partisan_majority = "Majority Sponsors"
+)
+
+
+g1_data <- summarise_cell_ci(df_merged, "house_pass") %>%
+  mutate(
+    minority_label = ifelse(minority == 1, "Minority", "Majority"),
+    house_pass_label = ifelse(pass == 1, "Passed", "Failed")
+  )
+
+g1 <- ggplot(
+  g1_data,
+  aes(
+    x = bipartisan_category,
+    y = mean_score,
+    fill = house_pass_label,
+    pattern = minority_label
+  )
+) +
+  geom_bar_pattern(
+    stat = "identity",
+    position = position_dodge(width = 0.8),
+    width = 0.7,
+    pattern_fill = "black",
+    pattern_angle = 45,
+    pattern_density = 0.2,
+    pattern_spacing = 0.05,
+    color = "black",
+    pattern_key_scale_factor = 0.6
+  ) +
+  geom_errorbar(
+    aes(ymin = ci_low, ymax = ci_high),
+    position = position_dodge(width = 0.8),
+    width = 0.2,
+    color = "black"
+  ) +
+  scale_x_discrete(labels = bipartisan_labels) +
+  scale_fill_manual(
+    values = c("Passed" = "darkgreen", "Failed" = "firebrick"),
+    name = "Bill Passage"
+  ) +
+  scale_pattern_manual(
+    values = c("Majority" = "none", "Minority" = "stripe"),
+    name = "Speaker Status"
+  ) +
+  guides(
+    fill = guide_legend(override.aes = list(pattern = "none"), order = 1),
+    pattern = guide_legend(override.aes = list(fill = "grey"), order = 2)
+  ) +
+  labs(
+    title = "Empirical Score by Bipartisan Category and Bill Passage (House)",
+    x = NULL,
+    y = "Mean Empirical Score"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+
+ggsave(
+  paste(here(), "plots", "bipartisan_category_bill_pass_house.png", sep = "/"),
+  g1, width = 8, height = 6, dpi = 300
+)
+
+g1
+
+
+g2_data <- summarise_cell_ci(df_merged, "law_pass") %>%
+  mutate(
+    minority_label = ifelse(minority == 1, "Minority", "Majority"),
+    law_pass_label = ifelse(pass == 1, "Passed", "Failed")
+  )
+
+g2 <- ggplot(
+  g2_data,
+  aes(
+    x = bipartisan_category,
+    y = mean_score,
+    fill = law_pass_label,
+    pattern = minority_label
+  )
+) +
+  geom_bar_pattern(
+    stat = "identity",
+    position = position_dodge(width = 0.8),
+    width = 0.7,
+    pattern_fill = "black",
+    pattern_angle = 45,
+    pattern_density = 0.2,
+    pattern_spacing = 0.05,
+    color = "black",
+    pattern_key_scale_factor = 0.6
+  ) +
+  geom_errorbar(
+    aes(ymin = ci_low, ymax = ci_high),
+    position = position_dodge(width = 0.8),
+    width = 0.2,
+    color = "black"
+  ) +
+  scale_x_discrete(labels = bipartisan_labels) +
+  scale_fill_manual(
+    values = c("Passed" = "darkgreen", "Failed" = "firebrick"),
+    name = "Bill Passage"
+  ) +
+  scale_pattern_manual(
+    values = c("Majority" = "none", "Minority" = "stripe"),
+    name = "Speaker Status"
+  ) +
+  guides(
+    fill = guide_legend(override.aes = list(pattern = "none"), order = 1),
+    pattern = guide_legend(override.aes = list(fill = "grey"), order = 2)
+  ) +
+  labs(
+    title = "Empirical Score by Bipartisan Category and Bill Passage (Signed into Law)",
+    x = NULL,
+    y = "Mean Empirical Score"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+
+ggsave(
+  paste(here(), "plots", "bipartisan_category_bill_pass_law.png", sep = "/"),
+  g2, width = 8, height = 6, dpi = 300
+)
+
+
+
+# # Define x-axis labels
+# bipartisan_labels <- c(
+#   "partisan_minority" = "Minority Sponsors",
+#   "bipartisan" = "Bipartisan Sponsors",
+#   "partisan_majority" = "Majority Sponsors"
+# )
+# 
+# # HOUSE PASSAGE
+# # House passage data
+# g1_data <- df_merged %>%
+#   filter(
+#     !is.na(bipartisan_category),
+#     bipartisan_category != "other",
+#     !is.na(minority),
+#     !is.na(house_pass)
+#   ) %>%
+#   group_by(bipartisan_category, minority, house_pass) %>%
+#   summarise(
+#     mean_score = mean(mean_score, na.rm = TRUE),
+#     se = sd(mean_score, na.rm = TRUE) / sqrt(n()),
+#     .groups = "drop"
+#   ) %>%
+#   mutate(
+#     minority_label = ifelse(minority == 1, "Minority", "Majority"),
+#     house_pass_label = ifelse(house_pass == 1, "Passed", "Failed")
+#   )
+# 
+# g1 <- ggplot(
+#   g1_data,
+#   aes(
+#     x = bipartisan_category,
+#     y = mean_score,
+#     fill = house_pass_label,
+#     pattern = minority_label
+#   )
+# ) +
+#   geom_bar_pattern(
+#     stat = "identity",
+#     position = position_dodge(width = 0.8),
+#     width = 0.7,
+#     pattern_fill = "black",
+#     pattern_angle = 45,
+#     pattern_density = 0.2,
+#     pattern_spacing = 0.05,
+#     color = "black",
+#     pattern_key_scale_factor = 0.6
+#   ) +
+#   geom_errorbar(
+#     aes(ymin = mean_score - se, ymax = mean_score + se),
+#     position = position_dodge(width = 0.8),
+#     width = 0.2,
+#     color = "black"
+#   ) +
+#   scale_x_discrete(labels = bipartisan_labels) +
+#   scale_fill_manual(
+#     values = c("Passed" = "darkgreen", "Failed" = "firebrick"),
+#     name = "Bill Passage"
+#   ) +
+#   scale_pattern_manual(
+#     values = c("Majority" = "none", "Minority" = "stripe"),
+#     name = "Speaker Status"
+#   ) +
+#   guides(
+#     fill = guide_legend(
+#       override.aes = list(pattern = "none"),
+#       order = 1
+#     ),
+#     pattern = guide_legend(
+#       override.aes = list(fill = "grey"),
+#       order = 2
+#     )
+#   ) +
+#   labs(
+#     title = "Empirical Score by Bipartisan Category and Bill Passage (House)",
+#     x = NULL,
+#     y = "Mean Empirical Score"
+#   ) +
+#   theme_minimal() +
+#   theme(axis.text.x = element_text(angle = 30, hjust = 1))
+# 
+# ggsave(paste(here(), "plots", "bipartisan_category_bill_pass_house.png", sep = "/"),
+#        g1, width = 8, height = 6, dpi = 300)
+# 
+# 
+# 
+# # LAW PASSAGE
+# # Law passage data
+# g2_data <- df_merged %>%
+#   filter(
+#     !is.na(bipartisan_category),
+#     bipartisan_category != "other",
+#     !is.na(minority),
+#     !is.na(law_pass)
+#   ) %>%
+#   group_by(bipartisan_category, minority, law_pass) %>%
+#   summarise(
+#     mean_score = mean(mean_score, na.rm = TRUE),
+#     se = sd(mean_score, na.rm = TRUE) / sqrt(n()),
+#     .groups = "drop"
+#   ) %>%
+#   mutate(
+#     minority_label = ifelse(minority == 1, "Minority", "Majority"),
+#     law_pass_label = ifelse(law_pass == 1, "Passed", "Failed")
+#   )
+# 
+# g2 <- ggplot(
+#   g2_data,
+#   aes(
+#     x = bipartisan_category,
+#     y = mean_score,
+#     fill = law_pass_label,
+#     pattern = minority_label
+#   )
+# ) +
+#   geom_bar_pattern(
+#     stat = "identity",
+#     position = position_dodge(width = 0.8),
+#     width = 0.7,
+#     pattern_fill = "black",
+#     pattern_angle = 45,
+#     pattern_density = 0.2,
+#     pattern_spacing = 0.05,
+#     color = "black",
+#     pattern_key_scale_factor = 0.6
+#   ) +
+#   geom_errorbar(
+#     aes(ymin = mean_score - se, ymax = mean_score + se),
+#     position = position_dodge(width = 0.8),
+#     width = 0.2,
+#     color = "black"
+#   ) +
+#   scale_x_discrete(labels = bipartisan_labels) +
+#   scale_fill_manual(
+#     values = c("Passed" = "darkgreen", "Failed" = "firebrick"),
+#     name = "Bill Passage"
+#   ) +
+#   scale_pattern_manual(
+#     values = c("Majority" = "none", "Minority" = "stripe"),
+#     name = "Speaker Status"
+#   ) +
+#   guides(
+#     fill = guide_legend(
+#       override.aes = list(pattern = "none"),
+#       order = 1
+#     ),
+#     pattern = guide_legend(
+#       override.aes = list(fill = "grey"),
+#       order = 2
+#     )
+#   ) +
+#   labs(
+#     title = "Empirical Score by Bipartisan Category and Bill Passage (Signed into Law)",
+#     x = NULL,
+#     y = "Mean Empirical Score"
+#   ) +
+#   theme_minimal() +
+#   theme(axis.text.x = element_text(angle = 30, hjust = 1))
+# 
+# ggsave(paste(here(), "plots", "bipartisan_category_bill_pass_law.png", sep = "/"),
+#        g2, width = 8, height = 6, dpi = 300)
+
+
+# library(ggpattern)
+# 
+# 
+# g1 <- df_merged %>%
+#   filter(
+#     !is.na(bipartisan_category),
+#     !is.na(minority),
+#     !is.na(house_pass)
+#   ) %>%
+#   group_by(bipartisan_category, minority, house_pass) %>%
+#   summarise(mean_score = mean(mean_score, na.rm = TRUE), .groups = "drop") %>%
+#   mutate(
+#     minority_label = ifelse(minority == 1, "Minority", "Majority"),
+#     house_pass_label = ifelse(house_pass == 1, "Passed", "Failed"),
+#     group = interaction(minority_label, house_pass_label, sep = " / ")
+#   ) %>% 
+# ggplot(aes(
+#     x = bipartisan_category,
+#     y = mean_score,
+#     fill = house_pass_label,
+#     pattern = minority_label
+#   )
+# ) +
+#   geom_bar_pattern(
+#     stat = "identity",
+#     position = position_dodge(width = 0.8),
+#     width = 0.7,
+#     pattern_fill = "black",           # pattern color
+#     pattern_angle = 45,
+#     pattern_density = 0.2,
+#     pattern_spacing = 0.05,
+#     color = "black",                  # bar outline
+#     pattern_key_scale_factor = 0.6
+#   ) +
+#   scale_fill_manual(
+#     values = c("Passed" = "darkgreen", "Failed" = "firebrick")
+#   ) +
+#   scale_pattern_manual(
+#     values = c("Majority" = "none", "Minority" = "stripe")
+#   ) +
+#   labs(
+#     title = "Empirical Score by Bipartisan Category and Bill Passage (House)",
+#     x = "Bipartisan Category",
+#     y = "Mean Empirical Score",
+#     fill = "Bill Passage",
+#     pattern = "Speaker Status"
+#   ) +
+#   theme_minimal() +
+#   theme(axis.text.x = element_text(angle = 30, hjust = 1))
+# 
+# 
+# ggsave(paste(here(), "plots", "bipartisan_category_bill_pass_house.png", sep = "/"),
+#        g1, width = 8, height = 6, dpi = 300)
+# 
+# 
+# g2 <- df_merged %>%
+#   filter(
+#     !is.na(bipartisan_category),
+#     !is.na(minority),
+#     !is.na(law_pass)
+#   ) %>%
+#   group_by(bipartisan_category, minority, law_pass) %>%
+#   summarise(mean_score = mean(mean_score, na.rm = TRUE), .groups = "drop") %>%
+#   mutate(
+#     minority_label = ifelse(minority == 1, "Minority", "Majority"),
+#     law_pass_label = ifelse(law_pass == 1, "Passed", "Failed"),
+#     group = interaction(minority_label, law_pass, sep = " / ")
+#   ) %>% 
+# ggplot(aes(
+#     x = bipartisan_category,
+#     y = mean_score,
+#     fill = law_pass_label,
+#     pattern = minority_label
+#   )
+# ) +
+#   geom_bar_pattern(
+#     stat = "identity",
+#     position = position_dodge(width = 0.8),
+#     width = 0.7,
+#     pattern_fill = "black",           # pattern color
+#     pattern_angle = 45,
+#     pattern_density = 0.2,
+#     pattern_spacing = 0.05,
+#     color = "black",                  # bar outline
+#     pattern_key_scale_factor = 0.6
+#   ) +
+#   scale_fill_manual(
+#     values = c("Passed" = "darkgreen", "Failed" = "firebrick")
+#   ) +
+#   scale_pattern_manual(
+#     values = c("Majority" = "none", "Minority" = "stripe")
+#   ) +
+#   labs(
+#     title = "Empirical Score by Bipartisan Category and Bill Passage (Signed into Law)",
+#     x = "Bipartisan Category",
+#     y = "Mean Empirical Score",
+#     fill = "Bill Passage",
+#     pattern = "Speaker Status"
+#   ) +
+#   theme_minimal() +
+#   theme(axis.text.x = element_text(angle = 30, hjust = 1))
+# 
+# 
+# ggsave(paste(here(), "plots", "bipartisan_category_bill_pass_law.png", sep = "/"),
+#        g2, width = 8, height = 6, dpi = 300)
+
+```
+
+
+
+```{r include=FALSE}
+df_bills <- read.csv(paste(here(),"data", "df_bills.csv",sep = '/'))
+
+
+# Plot the distribution
+
+g_intensity_dist <- ggplot(df_bills, aes(x = bipartisanship_intensity)) +
+  geom_histogram(binwidth = 0.05, fill = "steelblue", color = "white", boundary = 0) +
+  labs(
+    x = "Bipartisanship Score",
+    y = "Count"
+  ) +
+  theme_minimal()
+
+
+ggsave(paste(here(), "plots", "bipartisan_intensity_dist.png", sep = "/"),
+       g_intensity_dist,
+       width = 8,
+       height = 6,
+       dpi = 300)
+
+
+
+# df_bills <- df_bills %>%
+#   mutate(
+#     bipartisan_category = case_when(
+#       is.na(bipartisanship_intensity) ~ NA_character_,
+#       bipartisanship_intensity <= 0.10 ~ "partisan_majority",
+#       bipartisanship_intensity >= 0.90 ~ "partisan_minority",
+#       TRUE ~ "bipartisan"
+#     )
+#   )
+# 
+# 
+# 
+# g_cat_dist_1 <- df_bills %>%
+#   mutate(bipartisan_category = factor(
+#     bipartisan_category,
+#     levels = c("partisan_majority", "bipartisan", "partisan_minority")
+#   )) %>%
+#   ggplot(aes(x = bipartisan_category)) +
+#   geom_bar(fill = "steelblue") +
+#   labs(
+#     title = "Distribution: Majority (0-0.1), Bipartisan (0.1-0.9), Minority (0.9-1)",
+#     x = "Bipartisan Category",
+#     y = "Count"
+#   ) +   scale_x_discrete(labels = c(
+#   "partisan_majority" = "Majority",
+#   "bipartisan" = "Bipartisan",
+#   "partisan_minority" = "Minority"
+# )) +
+#   theme_minimal()
+
+df_bills <- df_bills %>%
+  mutate(
+    bipartisan_category = case_when(
+      is.na(bipartisanship_intensity) ~ NA_character_,
+      bipartisanship_intensity <= 0.10 ~ "partisan_majority",
+      bipartisanship_intensity >= 0.90 ~ "partisan_minority",
+      bipartisanship_intensity > 0.45 & bipartisanship_intensity < 0.55 ~ "bipartisan",
+      TRUE ~ "other"
+    )
+  )
+
+
+df_summary <- df_bills %>%
+  filter(!is.na(bipartisan_category), bipartisan_category != "other") %>%
+  group_by(bipartisan_category) %>%
+  summarise(
+    n = n(),
+    pass_rate = mean(house_pass, na.rm = TRUE)
+  ) %>%
+  mutate(bipartisan_category = factor(
+    bipartisan_category,
+    levels = c("partisan_majority", "bipartisan", "partisan_minority")
+  ))
+
+g_cat_dist <- ggplot(df_summary, aes(x = bipartisan_category, y = n)) +
+  geom_col(fill = "darkorange", alpha = 0.7) +
+  geom_col(aes(y = n * pass_rate), fill = "black", alpha = 0.4) +
+  labs(
+    # title = "Distribution: Majority (0-0.1), Bipartisan (0.45-0.55), Minority (0.9-1)",
+    x = "Bipartisan Category",
+    y = "Count"
+  ) +   scale_x_discrete(labels = c(
+  "partisan_majority" = "Majority",
+  "bipartisan" = "Bipartisan",
+  "partisan_minority" = "Minority"
+)) +
+  theme_minimal()
+
+
+
+
+# df_bills <- df_bills %>%
+#   mutate(
+#     bipartisan_category_3 = case_when(
+#       is.na(bipartisanship_intensity) ~ NA_character_,
+#       bipartisanship_intensity <= 0.20 ~ "partisan_majority",
+#       bipartisanship_intensity >= 0.80 ~ "partisan_minority",
+#       bipartisanship_intensity > 0.4 & bipartisanship_intensity < 0.6 ~ "bipartisan",
+#       TRUE ~ "other"
+#     )
+#   )
+# 
+# g_cat_dist_3 <- df_bills %>%
+#   mutate(bipartisan_category_3 = factor(
+#     bipartisan_category_3,
+#     levels = c("partisan_majority", "bipartisan", "partisan_minority")
+#   )) %>%  filter(bipartisan_category_3 != "other") %>%  # Optionally exclude 'other'
+#   ggplot(aes(x = bipartisan_category_3)) +
+#   geom_bar(fill = "seagreen") +
+#   labs(
+#     title = "Distribution: Majority (0-0.2), Bipartisan (0.4-0.6), Minority (0.8-1)",
+#     x = "Bipartisan Category",
+#     y = "Count"
+#   ) +
+#   scale_x_discrete(labels = c(
+#   "partisan_majority" = "Majority",
+#   "bipartisan" = "Bipartisan",
+#   "partisan_minority" = "Minority"
+# )) +
+#   theme_minimal()
+
+
+
+
+
+
+# ggsave(paste(here(), "plots", "bipartisan_cat_dist_01_09.png", sep = "/"),
+#        g_cat_dist_1,
+#        width = 8,
+#        height = 6,
+#        dpi = 300)
+
+
+ggsave(paste(here(), "plots", "bipartisan_cat_dist_45_55.png", sep = "/"),
+       g_cat_dist,
+       width = 8,
+       height = 6,
+       dpi = 300)
+
+
+# ggsave(paste(here(), "plots", "bipartisan_cat_dist_4_6.png", sep = "/"),
+#        g_cat_dist_3,
+#        width = 8,
+#        height = 6,
+#        dpi = 300)
+
+
+
+```
+
