@@ -391,6 +391,40 @@ def test_prepare_voteview_enrichment_rank_standardization(voteview_csv):
     assert smith_115["abs_dwnom1_rs"] == 0.5
     assert jones_115["abs_dwnom1_rs"] == 1.0
 
-    # seniority_sq_rs is just the square of seniority_rs
-    assert jones_115["seniority_sq_rs"] == 0.25
-    assert smith_115["seniority_sq_rs"] == 1.0
+    # seniority_sq_rs is rank(seniority_sq) within congress.
+    # Since seniority is always positive, squaring preserves rank order, so
+    # seniority_sq_rs == seniority_rs.
+    assert jones_115["seniority_sq_rs"] == jones_115["seniority_rs"]
+    assert smith_115["seniority_sq_rs"] == smith_115["seniority_rs"]
+
+
+def test_seniority_sq_rs_is_rank_of_seniority_sq(voteview_csv):
+    """
+    seniority_sq_rs must equal rank(seniority_sq) within each congress (percentile),
+    NOT seniority_rs ** 2.
+
+    Since seniority is always a positive integer, squaring preserves rank order,
+    so rank(seniority_sq) == rank(seniority) == seniority_rs.  This test verifies
+    both the computational definition (rank of seniority_sq) and the mathematical
+    consequence (equality with seniority_rs).
+    """
+    result = prepare_voteview_enrichment(path=voteview_csv, target_congresses=[115, 116, 117])
+
+    # Verify congress-by-congress that seniority_sq_rs == rank(seniority_sq, pct=True)
+    for congress, group in result.groupby("congress"):
+        expected = group["seniority_sq"].rank(pct=True)
+        pd.testing.assert_series_equal(
+            group["seniority_sq_rs"].reset_index(drop=True),
+            expected.reset_index(drop=True),
+            check_names=False,
+            obj=f"seniority_sq_rs in congress {congress}",
+        )
+
+    # Mathematical consequence: rank(x^2) == rank(x) for positive x
+    # so seniority_sq_rs must equal seniority_rs exactly
+    pd.testing.assert_series_equal(
+        result["seniority_sq_rs"].reset_index(drop=True),
+        result["seniority_rs"].reset_index(drop=True),
+        check_names=False,
+        obj="seniority_sq_rs == seniority_rs",
+    )

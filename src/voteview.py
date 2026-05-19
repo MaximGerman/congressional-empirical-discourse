@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 VOTEVIEW_MEMBERS_URL = "https://voteview.com/static/data/out/members/HSall_members.csv"
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "external")
 
+# At-large states: states with exactly 1 House district.
+# These need district_code normalized to 0 to match MIT Election Lab convention.
+AT_LARGE_STATES = {"AK", "DE", "MT", "ND", "SD", "VT", "WY"}
+
 
 def download_voteview_data(dest_dir=None):
     """
@@ -102,6 +106,24 @@ def compute_seniority(voteview_df, target_congresses=None):
     return house_terms[["bioguide_id", "congress", "seniority", "seniority_sq", "freshman"]]
 
 
+def normalize_at_large_districts(df):
+    """
+    Normalize at-large district codes from Voteview convention (1) to
+    MIT Election Lab convention (0).
+
+    Only normalizes district_code=1 in at-large states. States that gained
+    a second district (e.g., Montana in 2022) will have district_code=2
+    entries that are left unchanged.
+    """
+    df = df.copy()
+    is_at_large = df["state_abbrev"].isin(AT_LARGE_STATES) & (df["district_code"] == 1)
+    n_normalized = is_at_large.sum()
+    if n_normalized > 0:
+        df.loc[is_at_large, "district_code"] = 0
+        logger.info("Normalized %d at-large district codes (1 -> 0) for MIT Election Lab compatibility", n_normalized)
+    return df
+
+
 def prepare_voteview_enrichment(path=None, target_congresses=None):
     """
     Prepare Voteview data for pipeline enrichment.
@@ -161,7 +183,7 @@ def prepare_voteview_enrichment(path=None, target_congresses=None):
     # Rank-standardization (within congress)
     retVal["abs_dwnom1_rs"] = retVal.groupby("congress")["abs_dwnom1"].rank(pct=True)
     retVal["seniority_rs"] = retVal.groupby("congress")["seniority"].rank(pct=True)
-    retVal["seniority_sq_rs"] = retVal["seniority_rs"] ** 2
+    retVal["seniority_sq_rs"] = retVal.groupby("congress")["seniority_sq"].rank(pct=True)
 
     for c in sorted(target_congresses):
         n = retVal[retVal["congress"] == c]["bioguide_id"].nunique()
