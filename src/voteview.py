@@ -162,6 +162,7 @@ def prepare_voteview_enrichment(path=None, target_congresses=None):
         logger.warning("Gender column not found in Voteview data — gender will not be enriched")
 
     retVal = target_members[cols].copy()
+    retVal = normalize_at_large_districts(retVal)
 
     # Derived: absolute DW-NOMINATE dimension 1 (ideological extremity)
     retVal["abs_dwnom1"] = retVal["nominate_dim1"].abs()

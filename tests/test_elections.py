@@ -72,6 +72,29 @@ def test_fetch_mit_election_data_success(mock_makedirs, mock_get, tmp_path):
     assert kwargs["headers"]["X-Dataverse-key"] == "dummy_token"
 
 
+def test_at_large_district_normalization():
+    """Voteview codes at-large as 1, MIT as 0. Normalization should fix this."""
+    from src.voteview import normalize_at_large_districts
+
+    df = pd.DataFrame(
+        {
+            "state_abbrev": ["AK", "DE", "TX", "MT", "MT"],
+            "district_code": [1, 1, 7, 1, 2],
+            "congress": [115, 115, 115, 118, 118],
+        }
+    )
+    result = normalize_at_large_districts(df)
+
+    # At-large states with district_code=1 should become 0
+    assert result.loc[0, "district_code"] == 0  # AK
+    assert result.loc[1, "district_code"] == 0  # DE
+    # Non-at-large states unchanged
+    assert result.loc[2, "district_code"] == 7  # TX
+    # MT at-large (district 1) normalized, but district 2 stays
+    assert result.loc[3, "district_code"] == 0  # MT district 1 -> 0
+    assert result.loc[4, "district_code"] == 2  # MT district 2 unchanged
+
+
 @patch("src.elections.requests.get")
 def test_fetch_mit_election_data_failure(mock_get, tmp_path):
     """Test the fetcher function handles errors properly."""
