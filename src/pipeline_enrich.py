@@ -407,6 +407,27 @@ def _apply_enrichments(legislators_df):
         )
     assert len(legislators_df) == pre_voteview, "Voteview merge changed row count — check for duplicate keys"
 
+    # Filter out non-House members: Senators who testified at House hearings,
+    # territorial delegates, and members matched to wrong congresses.
+    # These have a bioguide_id but no Voteview data (because we only loaded House members
+    # for the target congresses). They have wrong minority status and missing covariates.
+    has_bio = legislators_df["bioguide_id"].notna()
+    has_voteview = legislators_df["nominate_dim1"].notna() | legislators_df["seniority"].notna()
+    non_house = has_bio & ~has_voteview
+    n_non_house = non_house.sum()
+    if n_non_house > 0:
+        non_house_bios = legislators_df.loc[non_house, "bioguide_id"].unique()
+        logger.warning(
+            "Filtering %d rows from %d non-House members (Senators/delegates/wrong-congress): %s",
+            n_non_house,
+            len(non_house_bios),
+            list(non_house_bios[:10]),
+        )
+        legislators_df = legislators_df[~non_house].copy()
+
+    matched_mask = legislators_df["bioguide_id"].notna()
+    n_matched = matched_mask.sum()
+
     # --- Committee leadership enrichment: chair/ranking member ---
     pre_leadership = len(legislators_df)
     legislators_df = prepare_leadership_enrichment(legislators_df)

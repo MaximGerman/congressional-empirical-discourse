@@ -72,11 +72,20 @@ def mock_pipeline_data(tmp_path, monkeypatch):
         "src.pipeline_enrich.load_hearings_members", lambda: pd.DataFrame(columns=["hearing_id", "bioguide_id"])
     )
 
-    # Mock external enrichments
+    # Mock external enrichments — include Voteview rows for all 4 mock members so they
+    # are not filtered out by the non-House-member filter (which drops bioguide_id rows
+    # that have no Voteview data, i.e. Senators / delegates / wrong-congress matches).
     monkeypatch.setattr(
         "src.pipeline_enrich.prepare_voteview_enrichment",
         lambda target_congresses: pd.DataFrame(
-            columns=["bioguide_id", "congress", "nominate_dim1", "seniority", "state_abbrev", "district_code"]
+            {
+                "bioguide_id": ["S1", "J1", "D1", "B1"],
+                "congress": [115, 115, 116, 116],
+                "nominate_dim1": [0.3, -0.3, 0.4, -0.4],
+                "seniority": [5, 5, 3, 3],
+                "state_abbrev": ["CA", "NY", "TX", "FL"],
+                "district_code": [1, 2, 3, 4],
+            }
         ),
     )
     monkeypatch.setattr("src.pipeline_enrich.prepare_leadership_enrichment", lambda df: df)

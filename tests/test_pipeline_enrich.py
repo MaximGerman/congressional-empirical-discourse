@@ -200,6 +200,50 @@ def test_apply_enrichments_integration(monkeypatch):
     assert result.loc[result["bioguide_id"] == "J002", "minority"].iloc[0] == 0
 
 
+def test_apply_enrichments_filters_non_house_members(monkeypatch):
+    """Senators/delegates/wrong-congress members (bioguide_id but no Voteview data) are dropped."""
+    df = pd.DataFrame(
+        {
+            "bioguide_id": ["H001", "S999", "W888"],
+            "congress": [115, 115, 115],
+            "party": ["Republican", "Independent", "Democratic"],
+            "state_abbrev": ["CA", pd.NA, pd.NA],
+            "district_code": [1, pd.NA, pd.NA],
+        }
+    )
+
+    def mock_voteview(target_congresses):
+        # Only H001 is a real House member — S999 (Senator) and W888 (wrong-congress) are absent
+        return pd.DataFrame(
+            {
+                "bioguide_id": ["H001"],
+                "congress": [115],
+                "nominate_dim1": [0.3],
+                "seniority": [8],
+            }
+        )
+
+    monkeypatch.setattr("src.pipeline_enrich.prepare_voteview_enrichment", mock_voteview)
+    monkeypatch.setattr(
+        "src.pipeline_enrich.prepare_leadership_enrichment", lambda df: df.assign(chairspeech=0, rankmemspeech=0)
+    )
+    monkeypatch.setattr(
+        "src.pipeline_enrich.load_elections_data",
+        lambda target_congresses: pd.DataFrame(
+            {"state_abbrev": ["CA"], "district_code": [1], "congress": [115], "vote_pct": [58.0]}
+        ),
+    )
+
+    result = _apply_enrichments(df)
+
+    # Only the real House member should survive
+    assert len(result) == 1
+    assert result["bioguide_id"].iloc[0] == "H001"
+    # Senator and wrong-congress member filtered out
+    assert "S999" not in result["bioguide_id"].values
+    assert "W888" not in result["bioguide_id"].values
+
+
 def test_match_speakers_multi_chair_edge_case(monkeypatch):
     """Test that a committee with multiple chairs doesn't cause a row explosion."""
     import pandas as pd
